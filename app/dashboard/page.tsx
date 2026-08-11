@@ -151,7 +151,7 @@ export default function DashboardPage() {
         supabase
           .from("telegraphic_transfers")
           .select(
-            "id, transfer_date, amount, location_id"
+            "id, transfer_date, amount, total_debited, location_id"
           )
           .order("transfer_date", {
             ascending: false,
@@ -283,7 +283,9 @@ export default function DashboardPage() {
           (sum, item) =>
             sum +
             Number(
-              item.amount || 0
+              item.total_debited ??
+                item.amount ??
+                0
             ),
           0
         );
@@ -430,7 +432,8 @@ export default function DashboardPage() {
                 ) =>
                   sum +
                   Number(
-                    item.amount ||
+                    item.total_debited ??
+                      item.amount ??
                       0
                   ),
                 0
@@ -567,7 +570,9 @@ export default function DashboardPage() {
             (sum, item) =>
               sum +
               Number(
-                item.amount || 0
+                item.total_debited ??
+                  item.amount ??
+                  0
               ),
             0
           );
@@ -799,7 +804,9 @@ export default function DashboardPage() {
               "Telegraphic Transfer",
 
             amount: Number(
-              item.amount || 0
+              item.total_debited ??
+                item.amount ??
+                0
             ),
 
             locationId:

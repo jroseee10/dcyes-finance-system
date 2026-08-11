@@ -239,7 +239,7 @@ export default function MonthlySummaryPage() {
           "telegraphic_transfers"
         )
         .select(
-          "id, transfer_date, amount, location_id"
+          "id, transfer_date, amount, total_debited, location_id"
         )
         .eq(
           "location_id",
@@ -360,7 +360,8 @@ export default function MonthlySummaryPage() {
                 ) =>
                   sum +
                   Number(
-                    record.amount ||
+                    record.total_debited ??
+                      record.amount ??
                       0
                   ),
                 0
