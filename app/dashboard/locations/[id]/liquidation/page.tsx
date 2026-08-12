@@ -21,6 +21,12 @@ type Liquidation = {
   status: string | null;
 };
 
+type CurrentUserProfile = {
+  name: string;
+  email: string;
+  position: string;
+};
+
 export default function LiquidationPage() {
   const params = useParams();
   const router = useRouter();
@@ -34,6 +40,12 @@ export default function LiquidationPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loadingRole, setLoadingRole] = useState(true);
+
+  const [currentProfile, setCurrentProfile] =
+    useState<CurrentUserProfile | null>(null);
 
   const [editingId, setEditingId] = useState<number | null>(null);
 
@@ -53,9 +65,65 @@ export default function LiquidationPage() {
   useEffect(() => {
     if (!locationId) return;
 
+    loadCurrentUserRole();
     loadLocation();
     loadLiquidations();
   }, [locationId]);
+
+  async function loadCurrentUserRole() {
+    setLoadingRole(true);
+
+    try {
+      const {
+        data: authData,
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (authError || !authData.user?.email) {
+        console.error("Auth error:", authError);
+        setIsAdmin(false);
+        return;
+      }
+
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
+        .from("users")
+        .select("name, email, position, status")
+        .eq("email", authData.user.email)
+        .maybeSingle();
+
+      if (profileError) {
+        console.error("Profile error:", profileError);
+        setIsAdmin(false);
+        return;
+      }
+
+      const active =
+        String(profile?.status || "")
+          .trim()
+          .toLowerCase() === "active";
+
+      const admin =
+        String(profile?.position || "")
+          .trim()
+          .toLowerCase() === "admin";
+
+      setIsAdmin(active && admin);
+
+      setCurrentProfile({
+        name: profile?.name || "",
+        email: profile?.email || authData.user.email,
+        position: profile?.position || "",
+      });
+    } catch (error) {
+      console.error("Role check error:", error);
+      setIsAdmin(false);
+    } finally {
+      setLoadingRole(false);
+    }
+  }
 
   async function loadLocation() {
     const { data, error } = await supabase
@@ -85,16 +153,64 @@ export default function LiquidationPage() {
 
     if (error) {
       console.error(error);
+
       alert(
         "Hindi ma-load ang liquidation records: " +
           error.message
       );
+
       setLoading(false);
       return;
     }
 
     setLiquidations(data || []);
     setLoading(false);
+  }
+
+  // =====================================================
+  // ACTIVITY LOG
+  // =====================================================
+
+  async function addActivityLog({
+    action,
+    recordId,
+    description,
+  }: {
+    action: string;
+    recordId: number;
+    description: string;
+  }) {
+    try {
+      if (!currentProfile) {
+        console.warn(
+          "Activity log skipped: user profile not loaded."
+        );
+        return;
+      }
+
+      const { error } = await supabase
+        .from("activity_logs")
+        .insert({
+          user_email: currentProfile.email,
+          user_name: currentProfile.name,
+          user_position: currentProfile.position,
+          action,
+          module: "Liquidation",
+          record_id: recordId,
+          location_id: locationId,
+          location_name: locationName,
+          description,
+        });
+
+      if (error) {
+        console.error("Activity log error:", error);
+      }
+    } catch (error) {
+      console.error(
+        "Activity log unexpected error:",
+        error
+      );
+    }
   }
 
   function handleChange(
@@ -128,6 +244,11 @@ export default function LiquidationPage() {
   }
 
   async function uploadReceipt(file: File) {
+    if (!isAdmin) {
+      alert("Admin only ang pag-upload o pagpalit ng receipt.");
+      return;
+    }
+
     if (!file) return;
 
     if (file.size > 5 * 1024 * 1024) {
@@ -191,6 +312,11 @@ export default function LiquidationPage() {
   ) {
     e.preventDefault();
 
+    if (!isAdmin) {
+      alert("Admin only ang pag-add o pag-edit ng liquidation.");
+      return;
+    }
+
     if (!form.liquidation_date) {
       alert("Ilagay ang date.");
       return;
@@ -228,44 +354,65 @@ export default function LiquidationPage() {
       status: form.status || "Pending",
     };
 
-    let error;
-
     if (editingId !== null) {
-      const result = await supabase
+      const { error } = await supabase
         .from("liquidations")
         .update(payload)
         .eq("id", editingId)
         .eq("location_id", locationId);
 
-      error = result.error;
+      if (error) {
+        console.error(error);
+        alert(
+          "Hindi na-update ang liquidation:\n" +
+            error.message
+        );
+        setSaving(false);
+        return;
+      }
+
+      await addActivityLog({
+        action: "Updated",
+        recordId: editingId,
+        description: `Updated liquidation for ${form.payee.trim()} - ₱${Number(
+          form.amount
+        ).toLocaleString("en-PH", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`,
+      });
+
+      alert("Liquidation successfully updated! ✅");
     } else {
-      const result = await supabase
+      const { data: insertedData, error } = await supabase
         .from("liquidations")
-        .insert(payload);
+        .insert(payload)
+        .select("id")
+        .single();
 
-      error = result.error;
+      if (error) {
+        console.error(error);
+        alert(
+          "Hindi na-save ang liquidation:\n" +
+            error.message
+        );
+        setSaving(false);
+        return;
+      }
+
+      await addActivityLog({
+        action: "Added",
+        recordId: insertedData.id,
+        description: `Added liquidation for ${form.payee.trim()} - ₱${Number(
+          form.amount
+        ).toLocaleString("en-PH", {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })}`,
+      });
+
+      alert("Liquidation successfully saved! ✅");
     }
-
-    if (error) {
-      console.error(error);
-
-      alert(
-        editingId !== null
-          ? "Hindi na-update ang liquidation:\n" +
-              error.message
-          : "Hindi na-save ang liquidation:\n" +
-              error.message
-      );
-
-      setSaving(false);
-      return;
-    }
-
-    alert(
-      editingId !== null
-        ? "Liquidation successfully updated! ✅"
-        : "Liquidation successfully saved! ✅"
-    );
 
     clearForm();
     setShowForm(false);
@@ -276,6 +423,11 @@ export default function LiquidationPage() {
   }
 
   function startEdit(item: Liquidation) {
+    if (!isAdmin) {
+      alert("Admin only ang pag-edit ng liquidation.");
+      return;
+    }
+
     setEditingId(item.id);
 
     setForm({
@@ -311,6 +463,11 @@ export default function LiquidationPage() {
   async function deleteLiquidation(
     item: Liquidation
   ) {
+    if (!isAdmin) {
+      alert("Admin only ang pag-delete ng liquidation.");
+      return;
+    }
+
     const confirmed = window.confirm(
       `Sigurado ka bang gusto mong i-delete ang liquidation record ni "${item.payee}"?`
     );
@@ -334,6 +491,17 @@ export default function LiquidationPage() {
       return;
     }
 
+    await addActivityLog({
+      action: "Deleted",
+      recordId: item.id,
+      description: `Deleted liquidation for ${item.payee} - ₱${Number(
+        item.amount || 0
+      ).toLocaleString("en-PH", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })}`,
+    });
+
     await loadLiquidations();
 
     alert(
@@ -348,12 +516,6 @@ export default function LiquidationPage() {
       0
     );
 
-  /*
-   * =====================================================
-   * EXPORT LIQUIDATION TO EXCEL
-   * =====================================================
-   */
-
   async function exportToExcel() {
     if (liquidations.length === 0) {
       alert(
@@ -367,6 +529,7 @@ export default function LiquidationPage() {
 
       workbook.creator =
         "DCYES Finance System";
+
       workbook.created = new Date();
 
       const worksheet =
@@ -383,23 +546,14 @@ export default function LiquidationPage() {
           }
         );
 
-      /*
-       * COLORS
-       */
-
       const navy = "FF1E3A8A";
       const blue = "FF2563EB";
-      const lightBlue = "FFEFF6FF";
       const lightGray = "FFF1F5F9";
       const gray = "FF64748B";
       const dark = "FF0F172A";
       const white = "FFFFFFFF";
       const green = "FF15803D";
       const lightGreen = "FFDCFCE7";
-
-      /*
-       * TITLE
-       */
 
       worksheet.mergeCells("A1:J1");
 
@@ -432,10 +586,6 @@ export default function LiquidationPage() {
 
       worksheet.getRow(1).height = 35;
 
-      /*
-       * LOCATION
-       */
-
       worksheet.mergeCells("A2:J2");
 
       const locationCell =
@@ -458,10 +608,6 @@ export default function LiquidationPage() {
       };
 
       worksheet.getRow(2).height = 24;
-
-      /*
-       * GENERATED DATE
-       */
 
       worksheet.mergeCells("A3:J3");
 
@@ -490,15 +636,7 @@ export default function LiquidationPage() {
         horizontal: "center",
       };
 
-      /*
-       * EMPTY ROW
-       */
-
       worksheet.addRow([]);
-
-      /*
-       * HEADERS
-       */
 
       const headers = [
         "Date",
@@ -520,62 +658,56 @@ export default function LiquidationPage() {
 
       headerRow.height = 28;
 
-      headerRow.eachCell(
-        (cell) => {
-          cell.font = {
-            bold: true,
+      headerRow.eachCell((cell) => {
+        cell.font = {
+          bold: true,
+          color: {
+            argb: white,
+          },
+          size: 11,
+        };
+
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: {
+            argb: navy,
+          },
+        };
+
+        cell.alignment = {
+          horizontal: "center",
+          vertical: "middle",
+          wrapText: true,
+        };
+
+        cell.border = {
+          top: {
+            style: "thin",
             color: {
               argb: white,
             },
-            size: 11,
-          };
-
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: {
-              argb: navy,
+          },
+          bottom: {
+            style: "thin",
+            color: {
+              argb: white,
             },
-          };
-
-          cell.alignment = {
-            horizontal: "center",
-            vertical: "middle",
-            wrapText: true,
-          };
-
-          cell.border = {
-            top: {
-              style: "thin",
-              color: {
-                argb: white,
-              },
+          },
+          left: {
+            style: "thin",
+            color: {
+              argb: white,
             },
-            bottom: {
-              style: "thin",
-              color: {
-                argb: white,
-              },
+          },
+          right: {
+            style: "thin",
+            color: {
+              argb: white,
             },
-            left: {
-              style: "thin",
-              color: {
-                argb: white,
-              },
-            },
-            right: {
-              style: "thin",
-              color: {
-                argb: white,
-              },
-            },
-          };
-        }
-      );
-
-      /*
-       * DATA
-       */
+          },
+        };
+      });
 
       liquidations.forEach(
         (item, index) => {
@@ -600,23 +732,11 @@ export default function LiquidationPage() {
                 : "",
             ]);
 
-          /*
-           * DATE
-           */
-
           row.getCell(1).numFmt =
             "mmmm d, yyyy";
 
-          /*
-           * AMOUNT
-           */
-
           row.getCell(6).numFmt =
             '₱#,##0.00';
-
-          /*
-           * RECEIPT LINK
-           */
 
           if (item.receipt_url) {
             row.getCell(10).value = {
@@ -634,10 +754,6 @@ export default function LiquidationPage() {
             };
           }
 
-          /*
-           * ALTERNATING ROW
-           */
-
           if (index % 2 === 1) {
             row.eachCell((cell) => {
               cell.fill = {
@@ -649,10 +765,6 @@ export default function LiquidationPage() {
               };
             });
           }
-
-          /*
-           * BORDERS + ALIGNMENT
-           */
 
           row.eachCell((cell) => {
             cell.border = {
@@ -713,10 +825,6 @@ export default function LiquidationPage() {
             vertical: "middle",
           };
 
-          /*
-           * TAX STYLE
-           */
-
           if (
             item.tax_type ===
             "With Tax"
@@ -738,10 +846,6 @@ export default function LiquidationPage() {
           }
         }
       );
-
-      /*
-       * TOTAL
-       */
 
       const totalRowNumber =
         worksheet.rowCount + 2;
@@ -853,10 +957,6 @@ export default function LiquidationPage() {
         totalRowNumber
       ).height = 28;
 
-      /*
-       * SUMMARY
-       */
-
       const summaryRowNumber =
         totalRowNumber + 2;
 
@@ -885,10 +985,6 @@ export default function LiquidationPage() {
       ).font = {
         bold: true,
       };
-
-      /*
-       * COLUMN WIDTHS
-       */
 
       worksheet.getColumn(1).width =
         20;
@@ -920,10 +1016,6 @@ export default function LiquidationPage() {
       worksheet.getColumn(10).width =
         18;
 
-      /*
-       * FREEZE HEADER
-       */
-
       worksheet.views = [
         {
           state: "frozen",
@@ -931,32 +1023,13 @@ export default function LiquidationPage() {
         },
       ];
 
-      /*
-       * AUTO FILTER
-       */
-
       worksheet.autoFilter = {
         from: "A5",
         to: "J5",
       };
 
-      /*
-       * PRINT SETTINGS
-       */
-
       worksheet.pageSetup.printTitlesRow =
         "1:5";
-
-     
-
-      /*
-       * FOOTER
-       */
-
-     
-      /*
-       * DOWNLOAD
-       */
 
       const buffer =
         await workbook.xlsx.writeBuffer();
@@ -1024,6 +1097,7 @@ export default function LiquidationPage() {
 
   return (
     <main className="min-h-screen bg-slate-100 flex">
+
       <Sidebar />
 
       <section className="flex-1 p-8">
@@ -1033,6 +1107,7 @@ export default function LiquidationPage() {
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 mb-8">
 
           <div>
+
             <button
               onClick={() =>
                 router.push(
@@ -1048,18 +1123,34 @@ export default function LiquidationPage() {
               Liquidation
             </h1>
 
-            <p className="text-slate-500 mt-1">
-              Location:{" "}
-              <span className="font-semibold text-slate-700">
-                {locationName ||
-                  "Loading..."}
-              </span>
-            </p>
+            <div className="flex items-center gap-3 mt-1">
+
+              <p className="text-slate-500">
+                Location:{" "}
+                <span className="font-semibold text-slate-700">
+                  {locationName || "Loading..."}
+                </span>
+              </p>
+
+              {!loadingRole && (
+                <span
+                  className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                    isAdmin
+                      ? "bg-blue-100 text-blue-700"
+                      : "bg-slate-200 text-slate-600"
+                  }`}
+                >
+                  {isAdmin
+                    ? "👑 Admin"
+                    : "👤 Office Staff"}
+                </span>
+              )}
+
+            </div>
+
           </div>
 
           <div className="flex flex-wrap gap-3">
-
-            {/* EXPORT EXCEL */}
 
             <button
               onClick={exportToExcel}
@@ -1071,32 +1162,47 @@ export default function LiquidationPage() {
               📊 Export Excel
             </button>
 
-            {/* ADD LIQUIDATION */}
+            {!loadingRole && isAdmin && (
+              <button
+                onClick={() => {
+                  if (showForm) {
+                    clearForm();
+                  }
 
-            <button
-              onClick={() => {
-                if (showForm) {
-                  clearForm();
-                }
-
-                setShowForm(
-                  !showForm
-                );
-              }}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-medium shadow-sm"
-            >
-              {showForm
-                ? "✕ Close Form"
-                : "+ Add Liquidation"}
-            </button>
+                  setShowForm(!showForm);
+                }}
+                className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-medium shadow-sm"
+              >
+                {showForm
+                  ? "✕ Close Form"
+                  : "+ Add Liquidation"}
+              </button>
+            )}
 
           </div>
 
         </div>
 
-        {/* FORM */}
+        {!loadingRole &&
+          !isAdmin && (
 
-        {showForm && (
+          <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4">
+
+            <p className="font-semibold text-blue-900">
+              👤 Office Staff Access
+            </p>
+
+            <p className="text-sm text-blue-700 mt-1">
+              You can view liquidation records, open receipts, refresh the list, and export to Excel. Adding, editing, and deleting are restricted to Admin users.
+            </p>
+
+          </div>
+
+        )}
+
+        {showForm &&
+          isAdmin && (
+
           <form
             onSubmit={
               saveLiquidation
@@ -1122,8 +1228,6 @@ export default function LiquidationPage() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
 
-              {/* DATE */}
-
               <div>
                 <label className="block text-sm font-medium mb-2">
                   Date *
@@ -1143,8 +1247,6 @@ export default function LiquidationPage() {
                 />
               </div>
 
-              {/* PAYEE */}
-
               <div>
                 <label className="block text-sm font-medium mb-2">
                   Payee *
@@ -1153,7 +1255,9 @@ export default function LiquidationPage() {
                 <input
                   type="text"
                   name="payee"
-                  value={form.payee}
+                  value={
+                    form.payee
+                  }
                   onChange={
                     handleChange
                   }
@@ -1162,8 +1266,6 @@ export default function LiquidationPage() {
                   required
                 />
               </div>
-
-              {/* ADDRESS */}
 
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -1184,8 +1286,6 @@ export default function LiquidationPage() {
                 />
               </div>
 
-              {/* TIN */}
-
               <div>
                 <label className="block text-sm font-medium mb-2">
                   TIN
@@ -1194,7 +1294,9 @@ export default function LiquidationPage() {
                 <input
                   type="text"
                   name="tin"
-                  value={form.tin}
+                  value={
+                    form.tin
+                  }
                   onChange={
                     handleChange
                   }
@@ -1202,8 +1304,6 @@ export default function LiquidationPage() {
                   className="w-full border border-slate-300 rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
-
-              {/* DESCRIPTION */}
 
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -1224,8 +1324,6 @@ export default function LiquidationPage() {
                 />
               </div>
 
-              {/* AMOUNT */}
-
               <div>
                 <label className="block text-sm font-medium mb-2">
                   Amount *
@@ -1236,7 +1334,9 @@ export default function LiquidationPage() {
                   step="0.01"
                   min="0"
                   name="amount"
-                  value={form.amount}
+                  value={
+                    form.amount
+                  }
                   onChange={
                     handleChange
                   }
@@ -1245,8 +1345,6 @@ export default function LiquidationPage() {
                   required
                 />
               </div>
-
-              {/* TAX */}
 
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -1272,8 +1370,6 @@ export default function LiquidationPage() {
                   </option>
                 </select>
               </div>
-
-              {/* STATUS */}
 
               <div>
                 <label className="block text-sm font-medium mb-2">
@@ -1304,8 +1400,6 @@ export default function LiquidationPage() {
                 </select>
               </div>
 
-              {/* RECEIPT */}
-
               <div>
                 <label className="block text-sm font-medium mb-2">
                   Receipt Photo
@@ -1331,8 +1425,7 @@ export default function LiquidationPage() {
                 />
 
                 <p className="text-xs text-slate-400 mt-1">
-                  JPG, PNG or other image
-                  files. Maximum 5MB.
+                  JPG, PNG or other image files. Maximum 5MB.
                 </p>
 
                 {uploading && (
@@ -1361,9 +1454,8 @@ export default function LiquidationPage() {
 
                   </div>
                 )}
-              </div>
 
-              {/* REMARKS */}
+              </div>
 
               <div className="lg:col-span-3">
 
@@ -1388,14 +1480,13 @@ export default function LiquidationPage() {
 
             </div>
 
-            {/* FORM BUTTONS */}
-
             <div className="flex justify-end gap-3 mt-6">
 
               <button
                 type="button"
                 onClick={() => {
                   clearForm();
+
                   setShowForm(
                     false
                   );
@@ -1423,9 +1514,8 @@ export default function LiquidationPage() {
             </div>
 
           </form>
-        )}
 
-        {/* SUMMARY CARDS */}
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-8">
 
@@ -1462,8 +1552,6 @@ export default function LiquidationPage() {
 
         </div>
 
-        {/* RECORDS TABLE */}
-
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
 
           <div className="p-6 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -1475,8 +1563,7 @@ export default function LiquidationPage() {
 
               <p className="text-sm text-slate-500 mt-1">
                 {liquidations.length} record
-                {liquidations.length !==
-                1
+                {liquidations.length !== 1
                   ? "s"
                   : ""}
               </p>
@@ -1507,12 +1594,6 @@ export default function LiquidationPage() {
 
               <p className="text-lg font-medium text-slate-700">
                 No liquidation records yet.
-              </p>
-
-              <p className="text-sm text-slate-500 mt-2">
-                Click "Add Liquidation"
-                to create your first
-                record.
               </p>
 
             </div>
@@ -1578,8 +1659,6 @@ export default function LiquidationPage() {
                         className="border-b border-slate-200 hover:bg-slate-50"
                       >
 
-                        {/* DATE */}
-
                         <td className="px-4 py-3 whitespace-nowrap">
 
                           {new Date(
@@ -1590,41 +1669,33 @@ export default function LiquidationPage() {
                             {
                               month:
                                 "long",
-                              day: "numeric",
-                              year: "numeric",
+                              day:
+                                "numeric",
+                              year:
+                                "numeric",
                             }
                           )}
 
                         </td>
 
-                        {/* PAYEE */}
-
                         <td className="px-4 py-3 font-medium text-slate-900">
                           {item.payee}
                         </td>
-
-                        {/* ADDRESS */}
 
                         <td className="px-4 py-3">
                           {item.address ||
                             "-"}
                         </td>
 
-                        {/* TIN */}
-
                         <td className="px-4 py-3 whitespace-nowrap">
                           {item.tin ||
                             "-"}
                         </td>
 
-                        {/* DESCRIPTION */}
-
                         <td className="px-4 py-3">
                           {item.description ||
                             "-"}
                         </td>
-
-                        {/* AMOUNT */}
 
                         <td className="px-4 py-3 text-right font-semibold whitespace-nowrap">
                           ₱
@@ -1639,8 +1710,6 @@ export default function LiquidationPage() {
                             }
                           )}
                         </td>
-
-                        {/* TAX */}
 
                         <td className="px-4 py-3 text-center">
 
@@ -1657,8 +1726,6 @@ export default function LiquidationPage() {
                           </span>
 
                         </td>
-
-                        {/* RECEIPT */}
 
                         <td className="px-4 py-3 text-center">
 
@@ -1681,8 +1748,6 @@ export default function LiquidationPage() {
 
                         </td>
 
-                        {/* STATUS */}
-
                         <td className="px-4 py-3 text-center">
 
                           <span
@@ -1702,35 +1767,43 @@ export default function LiquidationPage() {
 
                         </td>
 
-                        {/* ACTION */}
+                        <td className="px-4 py-3 text-center">
 
-                        <td className="px-4 py-3">
+                          {loadingRole ? (
+                            <span className="text-slate-400 text-xs">
+                              Checking...
+                            </span>
+                          ) : isAdmin ? (
+                            <div className="flex items-center justify-center gap-2">
 
-                          <div className="flex items-center justify-center gap-2">
+                              <button
+                                onClick={() =>
+                                  startEdit(
+                                    item
+                                  )
+                                }
+                                className="text-blue-600 hover:text-blue-800 font-medium"
+                              >
+                                Edit
+                              </button>
 
-                            <button
-                              onClick={() =>
-                                startEdit(
-                                  item
-                                )
-                              }
-                              className="text-blue-600 hover:text-blue-800 font-medium"
-                            >
-                              Edit
-                            </button>
+                              <button
+                                onClick={() =>
+                                  deleteLiquidation(
+                                    item
+                                  )
+                                }
+                                className="text-red-600 hover:text-red-800 font-medium"
+                              >
+                                Delete
+                              </button>
 
-                            <button
-                              onClick={() =>
-                                deleteLiquidation(
-                                  item
-                                )
-                              }
-                              className="text-red-600 hover:text-red-800 font-medium"
-                            >
-                              Delete
-                            </button>
-
-                          </div>
+                            </div>
+                          ) : (
+                            <span className="inline-flex px-3 py-1.5 rounded-lg bg-slate-100 text-slate-500 text-xs font-medium whitespace-nowrap">
+                              👁 View Only
+                            </span>
+                          )}
 
                         </td>
 
@@ -1739,8 +1812,6 @@ export default function LiquidationPage() {
                   )}
 
                 </tbody>
-
-                {/* TABLE TOTAL */}
 
                 <tfoot>
 
@@ -1764,9 +1835,7 @@ export default function LiquidationPage() {
                       )}
                     </td>
 
-                    <td
-                      colSpan={4}
-                    ></td>
+                    <td colSpan={4}></td>
 
                   </tr>
 
@@ -1780,6 +1849,7 @@ export default function LiquidationPage() {
         </div>
 
       </section>
+
     </main>
   );
 }

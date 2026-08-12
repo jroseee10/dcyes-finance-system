@@ -18,53 +18,18 @@ import ExcelJS from "exceljs";
 type DepositSlip = {
   id: number;
   location_id: number;
-
   deposit_date: string;
-
-  deposit_slip_no:
-    | string
-    | null;
-
-  bank:
-    | string
-    | null;
-
-  account_name:
-    | string
-    | null;
-
-  account_no:
-    | string
-    | null;
-
-  depositor:
-    | string
-    | null;
-
-  amount:
-    | number
-    | null;
-
-  deposit_type:
-    | string
-    | null;
-
-  reference_no:
-    | string
-    | null;
-
-  status:
-    | string
-    | null;
-
-  remarks:
-    | string
-    | null;
-
-  attachment_url:
-    | string
-    | null;
-
+  deposit_slip_no: string | null;
+  bank: string | null;
+  account_name: string | null;
+  account_no: string | null;
+  depositor: string | null;
+  amount: number | null;
+  deposit_type: string | null;
+  reference_no: string | null;
+  status: string | null;
+  remarks: string | null;
+  attachment_url: string | null;
   created_at: string;
 };
 
@@ -73,49 +38,39 @@ type Location = {
   name: string;
 };
 
-const emptyForm = {
-  deposit_date:
-    new Date()
-      .toISOString()
-      .slice(0, 10),
-
-  deposit_slip_no: "",
-
-  bank: "",
-
-  account_name: "",
-
-  account_no: "",
-
-  depositor: "",
-
-  amount: "",
-
-  deposit_type:
-    "Cash",
-
-  reference_no: "",
-
-  status:
-    "Pending",
-
-  remarks: "",
-
-  attachment_url: "",
+type CurrentUserProfile = {
+  name: string;
+  email: string;
+  position: string;
 };
 
-export default function DepositSlipsPage() {
-  const params =
-    useParams();
+const makeEmptyForm = () => ({
+  deposit_date: new Date()
+    .toISOString()
+    .slice(0, 10),
 
-  const router =
-    useRouter();
+  deposit_slip_no: "",
+  bank: "",
+  account_name: "",
+  account_no: "",
+  depositor: "",
+  amount: "",
+  deposit_type: "Cash",
+  reference_no: "",
+  status: "Pending",
+  remarks: "",
+  attachment_url: "",
+});
+
+export default function DepositSlipsPage() {
+  const params = useParams();
+  const router = useRouter();
 
   const locationId =
     Number(params.id);
 
   // =====================================================
-  // STATE
+  // DATA
   // =====================================================
 
   const [
@@ -130,15 +85,21 @@ export default function DepositSlipsPage() {
     records,
     setRecords,
   ] =
-    useState<
-      DepositSlip[]
-    >([]);
+    useState<DepositSlip[]>(
+      []
+    );
+
+  // =====================================================
+  // FORM
+  // =====================================================
 
   const [
     form,
     setForm,
   ] =
-    useState(emptyForm);
+    useState(
+      makeEmptyForm()
+    );
 
   const [
     editingId,
@@ -153,6 +114,10 @@ export default function DepositSlipsPage() {
     setShowForm,
   ] =
     useState(false);
+
+  // =====================================================
+  // LOADING
+  // =====================================================
 
   const [
     loading,
@@ -178,6 +143,10 @@ export default function DepositSlipsPage() {
   ] =
     useState(false);
 
+  // =====================================================
+  // ATTACHMENT
+  // =====================================================
+
   const [
     attachmentFile,
     setAttachmentFile,
@@ -186,11 +155,170 @@ export default function DepositSlipsPage() {
       null
     );
 
+  // =====================================================
+  // SEARCH
+  // =====================================================
+
   const [
     search,
     setSearch,
   ] =
     useState("");
+
+  // =====================================================
+  // ROLE
+  // =====================================================
+
+  const [
+    isAdmin,
+    setIsAdmin,
+  ] =
+    useState(false);
+
+  const [
+    loadingRole,
+    setLoadingRole,
+  ] =
+    useState(true);
+
+  const [
+    currentProfile,
+    setCurrentProfile,
+  ] = useState<CurrentUserProfile | null>(null);
+
+  // =====================================================
+  // LOAD CURRENT USER ROLE
+  // =====================================================
+
+  async function loadCurrentUserRole() {
+    setLoadingRole(true);
+
+    try {
+      const {
+        data: authData,
+        error: authError,
+      } =
+        await supabase.auth.getUser();
+
+      if (
+        authError ||
+        !authData.user ||
+        !authData.user.email
+      ) {
+        console.error(
+          "Deposit auth error:",
+          authError
+        );
+
+        setIsAdmin(false);
+
+        return;
+      }
+
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
+        .from("users")
+        .select(
+          "name, email, position, status"
+        )
+        .eq(
+          "email",
+          authData.user.email
+        )
+        .maybeSingle();
+
+      if (profileError) {
+        console.error(
+          "Deposit profile error:",
+          profileError
+        );
+
+        setIsAdmin(false);
+
+        return;
+      }
+
+      const active =
+        String(
+          profile?.status ||
+            ""
+        )
+          .trim()
+          .toLowerCase() ===
+        "active";
+
+      const admin =
+        String(
+          profile?.position ||
+            ""
+        )
+          .trim()
+          .toLowerCase() ===
+        "admin";
+
+      setIsAdmin(
+        active && admin
+      );
+
+      setCurrentProfile({
+        name: profile?.name || "",
+        email: profile?.email || authData.user.email,
+        position: profile?.position || "",
+      });
+    } catch (error) {
+      console.error(
+        "Deposit role check error:",
+        error
+      );
+
+      setIsAdmin(false);
+    } finally {
+      setLoadingRole(false);
+    }
+  }
+
+  // =====================================================
+  // ACTIVITY LOG
+  // =====================================================
+
+  async function addActivityLog({
+    action,
+    recordId,
+    description,
+  }: {
+    action: string;
+    recordId: number;
+    description: string;
+  }) {
+    try {
+      if (!currentProfile) {
+        console.warn("Activity log skipped: user profile not loaded.");
+        return;
+      }
+
+      const { error } = await supabase
+        .from("activity_logs")
+        .insert({
+          user_email: currentProfile.email,
+          user_name: currentProfile.name,
+          user_position: currentProfile.position,
+          action,
+          module: "Deposit Slips",
+          record_id: recordId,
+          location_id: locationId,
+          location_name: location?.name || null,
+          description,
+        });
+
+      if (error) {
+        console.error("Activity log error:", error);
+      }
+    } catch (error) {
+      console.error("Activity log unexpected error:", error);
+    }
+  }
 
   // =====================================================
   // LOAD DATA
@@ -251,9 +379,7 @@ export default function DepositSlipsPage() {
             }
           );
 
-      if (
-        error
-      ) {
+      if (error) {
         throw new Error(
           "Hindi makuha ang deposit slips: " +
             error.message
@@ -290,6 +416,7 @@ export default function DepositSlipsPage() {
       return;
     }
 
+    loadCurrentUserRole();
     loadData();
   }, [locationId]);
 
@@ -299,11 +426,15 @@ export default function DepositSlipsPage() {
 
   function updateField(
     field:
-      keyof typeof emptyForm,
+      keyof ReturnType<
+        typeof makeEmptyForm
+      >,
     value: string
   ) {
     setForm(
-      (previous) => ({
+      (
+        previous
+      ) => ({
         ...previous,
 
         [field]:
@@ -318,7 +449,7 @@ export default function DepositSlipsPage() {
 
   function clearForm() {
     setForm(
-      emptyForm
+      makeEmptyForm()
     );
 
     setEditingId(
@@ -335,18 +466,27 @@ export default function DepositSlipsPage() {
   }
 
   // =====================================================
-  // FILE SELECT
+  // FILE SELECT - ADMIN ONLY
   // =====================================================
 
   function handleFileChange(
     e: React.ChangeEvent<HTMLInputElement>
   ) {
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-upload o pagpalit ng Deposit Slip proof."
+      );
+
+      e.target.value =
+        "";
+
+      return;
+    }
+
     const file =
       e.target.files?.[0];
 
-    if (
-      !file
-    ) {
+    if (!file) {
       setAttachmentFile(
         null
       );
@@ -391,12 +531,18 @@ export default function DepositSlipsPage() {
   }
 
   // =====================================================
-  // UPLOAD ATTACHMENT
+  // UPLOAD ATTACHMENT - ADMIN ONLY
   // =====================================================
 
   async function uploadAttachment(
     file: File
   ) {
+    if (!isAdmin) {
+      throw new Error(
+        "Admin only ang pag-upload ng Deposit Slip proof."
+      );
+    }
+
     setUploading(
       true
     );
@@ -418,7 +564,10 @@ export default function DepositSlipsPage() {
       const fileName =
         `${Date.now()}-${Math.random()
           .toString(36)
-          .slice(2, 8)}.${safeExtension}`;
+          .slice(
+            2,
+            8
+          )}.${safeExtension}`;
 
       const filePath =
         `deposits/${locationId}/${fileName}`;
@@ -445,9 +594,7 @@ export default function DepositSlipsPage() {
             }
           );
 
-      if (
-        error
-      ) {
+      if (error) {
         console.error(
           "Deposit attachment upload error:",
           error
@@ -469,9 +616,7 @@ export default function DepositSlipsPage() {
             filePath
           );
 
-      return (
-        data.publicUrl
-      );
+      return data.publicUrl;
     } finally {
       setUploading(
         false
@@ -480,7 +625,7 @@ export default function DepositSlipsPage() {
   }
 
   // =====================================================
-  // VIEW ATTACHMENT USING SIGNED URL
+  // VIEW ATTACHMENT
   // =====================================================
 
   async function viewAttachment(
@@ -493,34 +638,57 @@ export default function DepositSlipsPage() {
       const signedMarker =
         "/storage/v1/object/sign/receipts/";
 
-      let filePath = "";
+      let filePath =
+        "";
 
-      if (url.includes(publicMarker)) {
-        filePath = decodeURIComponent(
-          url.substring(
-            url.indexOf(publicMarker) +
-              publicMarker.length
-          )
-        );
-      } else if (url.includes(signedMarker)) {
-        const rawPath = url.substring(
-          url.indexOf(signedMarker) +
-            signedMarker.length
-        );
-
-        filePath = decodeURIComponent(
-          rawPath.split("?")[0]
-        );
-      } else if (
-        !url.startsWith("http://") &&
-        !url.startsWith("https://")
+      if (
+        url.includes(
+          publicMarker
+        )
       ) {
-        // Supports future records if attachment_url stores only the Storage path.
-        filePath = url;
+        filePath =
+          decodeURIComponent(
+            url.substring(
+              url.indexOf(
+                publicMarker
+              ) +
+                publicMarker.length
+            )
+          );
+      } else if (
+        url.includes(
+          signedMarker
+        )
+      ) {
+        const rawPath =
+          url.substring(
+            url.indexOf(
+              signedMarker
+            ) +
+              signedMarker.length
+          );
+
+        filePath =
+          decodeURIComponent(
+            rawPath.split(
+              "?"
+            )[0]
+          );
+      } else if (
+        !url.startsWith(
+          "http://"
+        ) &&
+        !url.startsWith(
+          "https://"
+        )
+      ) {
+        filePath =
+          url;
       } else {
         alert(
           "Hindi mabasa ang attachment path."
         );
+
         return;
       }
 
@@ -529,7 +697,9 @@ export default function DepositSlipsPage() {
         error,
       } =
         await supabase.storage
-          .from("receipts")
+          .from(
+            "receipts"
+          )
           .createSignedUrl(
             filePath,
             60 * 5
@@ -537,7 +707,7 @@ export default function DepositSlipsPage() {
 
       if (error) {
         console.error(
-          "View attachment error:",
+          "View Deposit attachment error:",
           error
         );
 
@@ -556,7 +726,7 @@ export default function DepositSlipsPage() {
       );
     } catch (error) {
       console.error(
-        "View attachment error:",
+        "View Deposit attachment error:",
         error
       );
 
@@ -567,13 +737,21 @@ export default function DepositSlipsPage() {
   }
 
   // =====================================================
-  // SAVE RECORD
+  // SAVE - ADMIN ONLY
   // =====================================================
 
   async function saveRecord(
     e: React.FormEvent
   ) {
     e.preventDefault();
+
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-add o pag-edit ng Deposit Slip."
+      );
+
+      return;
+    }
 
     if (
       !form.deposit_date
@@ -629,7 +807,6 @@ export default function DepositSlipsPage() {
         form.attachment_url ||
         null;
 
-      // Upload new image only if user selected one
       if (
         attachmentFile
       ) {
@@ -647,18 +824,21 @@ export default function DepositSlipsPage() {
           form.deposit_date,
 
         deposit_slip_no:
-          form.deposit_slip_no.trim() ||
+          form.deposit_slip_no
+            .trim() ||
           null,
 
         bank:
           form.bank.trim(),
 
         account_name:
-          form.account_name.trim() ||
+          form.account_name
+            .trim() ||
           null,
 
         account_no:
-          form.account_no.trim() ||
+          form.account_no
+            .trim() ||
           null,
 
         depositor:
@@ -671,7 +851,8 @@ export default function DepositSlipsPage() {
           "Cash",
 
         reference_no:
-          form.reference_no.trim() ||
+          form.reference_no
+            .trim() ||
           null,
 
         status:
@@ -679,7 +860,8 @@ export default function DepositSlipsPage() {
           "Pending",
 
         remarks:
-          form.remarks.trim() ||
+          form.remarks
+            .trim() ||
           null,
 
         attachment_url:
@@ -713,13 +895,17 @@ export default function DepositSlipsPage() {
               locationId
             );
 
-        if (
-          error
-        ) {
+        if (error) {
           throw new Error(
             error.message
           );
         }
+
+        await addActivityLog({
+          action: "Updated",
+          recordId: editingId,
+          description: `Updated deposit slip ${form.deposit_slip_no.trim() || "(no slip number)"} - ${form.bank.trim()} - ₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        });
 
         alert(
           "Deposit Slip successfully updated!"
@@ -732,6 +918,7 @@ export default function DepositSlipsPage() {
 
       else {
         const {
+          data: insertedData,
           error,
         } =
           await supabase
@@ -740,15 +927,21 @@ export default function DepositSlipsPage() {
             )
             .insert(
               payload
-            );
+            )
+            .select("id")
+            .single();
 
-        if (
-          error
-        ) {
+        if (error) {
           throw new Error(
             error.message
           );
         }
+
+        await addActivityLog({
+          action: "Added",
+          recordId: insertedData.id,
+          description: `Added deposit slip ${form.deposit_slip_no.trim() || "(no slip number)"} - ${form.bank.trim()} - ₱${amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        });
 
         alert(
           "Deposit Slip successfully saved!"
@@ -766,9 +959,11 @@ export default function DepositSlipsPage() {
 
       alert(
         "Hindi ma-save ang Deposit Slip: " +
-          (error instanceof Error
-            ? error.message
-            : "Unknown error")
+          (
+            error instanceof Error
+              ? error.message
+              : "Unknown error"
+          )
       );
     } finally {
       setSaving(
@@ -782,12 +977,20 @@ export default function DepositSlipsPage() {
   }
 
   // =====================================================
-  // EDIT
+  // EDIT - ADMIN ONLY
   // =====================================================
 
   function startEdit(
     record: DepositSlip
   ) {
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-edit ng Deposit Slip."
+      );
+
+      return;
+    }
+
     setEditingId(
       record.id
     );
@@ -859,12 +1062,20 @@ export default function DepositSlipsPage() {
   }
 
   // =====================================================
-  // DELETE
+  // DELETE - ADMIN ONLY
   // =====================================================
 
   async function deleteRecord(
     record: DepositSlip
   ) {
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-delete ng Deposit Slip."
+      );
+
+      return;
+    }
+
     const confirmed =
       window.confirm(
         `Sigurado ka bang gusto mong i-delete ang deposit slip${
@@ -899,9 +1110,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
           locationId
         );
 
-    if (
-      error
-    ) {
+    if (error) {
       alert(
         "Hindi ma-delete ang deposit slip: " +
           error.message
@@ -910,8 +1119,14 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
       return;
     }
 
+    await addActivityLog({
+      action: "Deleted",
+      recordId: record.id,
+      description: `Deleted deposit slip ${record.deposit_slip_no || "(no slip number)"} - ${record.bank || "No bank"} - ₱${Number(record.amount || 0).toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+    });
+
     alert(
-      "Deposit Slip successfully deleted! Attachment remains in Storage."
+      "Deposit Slip successfully deleted!"
     );
 
     await loadData();
@@ -935,7 +1150,9 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
       }
 
       return records.filter(
-        (record) =>
+        (
+          record
+        ) =>
           [
             record.deposit_slip_no,
 
@@ -988,7 +1205,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
     );
 
   // =====================================================
-  // CURRENCY
+  // FORMAT CURRENCY
   // =====================================================
 
   function formatCurrency(
@@ -1012,7 +1229,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
   }
 
   // =====================================================
-  // DATE
+  // FORMAT DATE
   // =====================================================
 
   function formatDate(
@@ -1035,13 +1252,19 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
     }
 
     const year =
-      Number(parts[0]);
+      Number(
+        parts[0]
+      );
 
     const month =
-      Number(parts[1]);
+      Number(
+        parts[1]
+      );
 
     const day =
-      Number(parts[2]);
+      Number(
+        parts[2]
+      );
 
     return new Date(
       year,
@@ -1063,7 +1286,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
   }
 
   // =====================================================
-  // EXPORT TO EXCEL
+  // EXPORT EXCEL
   // =====================================================
 
   async function exportToExcel() {
@@ -1099,13 +1322,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
       workbook.creator =
         "DCYES Finance System";
 
-      workbook.lastModifiedBy =
-        "DCYES Finance System";
-
       workbook.created =
-        new Date();
-
-      workbook.modified =
         new Date();
 
       const worksheet =
@@ -1244,13 +1461,11 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
               "attachment",
 
             width:
-              45,
+              25,
           },
         ];
 
-      // =================================================
       // TITLE
-      // =================================================
 
       worksheet.mergeCells(
         "A1:L1"
@@ -1309,9 +1524,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
       ).height =
         30;
 
-      // =================================================
       // SUBTITLE
-      // =================================================
 
       worksheet.mergeCells(
         "A2:L2"
@@ -1327,12 +1540,6 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
       subtitle.font =
         {
-          name:
-            "Calibri",
-
-          size:
-            11,
-
           italic:
             true,
 
@@ -1346,24 +1553,9 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
         {
           horizontal:
             "center",
-
-          vertical:
-            "middle",
         };
 
-      worksheet.getRow(
-        2
-      ).height =
-        22;
-
-      worksheet.getRow(
-        3
-      ).height =
-        8;
-
-      // =================================================
       // HEADER
-      // =================================================
 
       const headerRow =
         worksheet.getRow(
@@ -1373,43 +1565,25 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
       headerRow.values =
         [
           "Date",
-
           "Deposit Slip No.",
-
           "Bank",
-
           "Account Name",
-
           "Account No.",
-
           "Depositor",
-
           "Amount",
-
           "Deposit Type",
-
           "Reference No.",
-
           "Status",
-
           "Remarks",
-
           "Attachment",
         ];
 
-      headerRow.height =
-        34;
-
       headerRow.eachCell(
-        (cell) => {
+        (
+          cell
+        ) => {
           cell.font =
             {
-              name:
-                "Calibri",
-
-              size:
-                10,
-
               bold:
                 true,
 
@@ -1444,58 +1618,15 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
               wrapText:
                 true,
             };
-
-          cell.border =
-            {
-              top: {
-                style:
-                  "thin",
-
-                color: {
-                  argb:
-                    "FFFFFFFF",
-                },
-              },
-
-              bottom: {
-                style:
-                  "thin",
-
-                color: {
-                  argb:
-                    "FFFFFFFF",
-                },
-              },
-
-              left: {
-                style:
-                  "thin",
-
-                color: {
-                  argb:
-                    "FFFFFFFF",
-                },
-              },
-
-              right: {
-                style:
-                  "thin",
-
-                color: {
-                  argb:
-                    "FFFFFFFF",
-                },
-              },
-            };
         }
       );
 
-      // =================================================
       // RECORDS
-      // =================================================
 
       records.forEach(
-        (record) => {
+        (
+          record
+        ) => {
           const parts =
             record.deposit_date
               ?.split(
@@ -1564,90 +1695,11 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                 record.remarks ||
                   "",
 
-                record.attachment_url ||
-                  "",
+                record.attachment_url
+                  ? "View Proof"
+                  : "",
               ]
             );
-
-          row.height =
-            24;
-
-          row.eachCell(
-            (
-              cell,
-              index
-            ) => {
-              cell.font =
-                {
-                  name:
-                    "Calibri",
-
-                  size:
-                    10,
-                };
-
-              cell.alignment =
-                {
-                  vertical:
-                    "middle",
-
-                  horizontal:
-                    index ===
-                    7
-                      ? "right"
-                      : index ===
-                        1
-                      ? "center"
-                      : "left",
-
-                  wrapText:
-                    true,
-                };
-
-              cell.border =
-                {
-                  top: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-
-                  bottom: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-
-                  left: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-
-                  right: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-                };
-            }
-          );
 
           row.getCell(
             1
@@ -1659,7 +1711,6 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
           ).numFmt =
             "₱#,##0.00";
 
-          // Clickable attachment
           if (
             record.attachment_url
           ) {
@@ -1674,12 +1725,48 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                   record.attachment_url,
               };
           }
+
+          row.eachCell(
+            (
+              cell
+            ) => {
+              cell.border =
+                {
+                  top: {
+                    style:
+                      "thin",
+                  },
+
+                  bottom: {
+                    style:
+                      "thin",
+                  },
+
+                  left: {
+                    style:
+                      "thin",
+                  },
+
+                  right: {
+                    style:
+                      "thin",
+                  },
+                };
+
+              cell.alignment =
+                {
+                  vertical:
+                    "middle",
+
+                  wrapText:
+                    true,
+                };
+            }
+          );
         }
       );
 
-      // =================================================
-      // OVERALL TOTAL
-      // =================================================
+      // TOTAL
 
       const totalRow =
         worksheet.addRow(
@@ -1690,7 +1777,18 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
             "",
             "",
             "",
-            overallTotal,
+            records.reduce(
+              (
+                sum,
+                record
+              ) =>
+                sum +
+                Number(
+                  record.amount ||
+                    0
+                ),
+              0
+            ),
             "",
             "",
             "",
@@ -1699,28 +1797,21 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
           ]
         );
 
-      totalRow.height =
-        30;
+      totalRow.font =
+        {
+          bold:
+            true,
+
+          color: {
+            argb:
+              "FFFFFFFF",
+          },
+        };
 
       totalRow.eachCell(
-        (cell) => {
-          cell.font =
-            {
-              name:
-                "Calibri",
-
-              size:
-                11,
-
-              bold:
-                true,
-
-              color: {
-                argb:
-                  "FFFFFFFF",
-              },
-            };
-
+        (
+          cell
+        ) => {
           cell.fill =
             {
               type:
@@ -1734,38 +1825,6 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                   "1F3B64",
               },
             };
-
-          cell.alignment =
-            {
-              horizontal:
-                "center",
-
-              vertical:
-                "middle",
-            };
-
-          cell.border =
-            {
-              top: {
-                style:
-                  "thin",
-              },
-
-              bottom: {
-                style:
-                  "thin",
-              },
-
-              left: {
-                style:
-                  "thin",
-              },
-
-              right: {
-                style:
-                  "thin",
-              },
-            };
         }
       );
 
@@ -1773,10 +1832,6 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
         7
       ).numFmt =
         "₱#,##0.00";
-
-      // =================================================
-      // FILTER / FREEZE
-      // =================================================
 
       worksheet.autoFilter =
         {
@@ -1798,10 +1853,6 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
           },
         ];
 
-      // =================================================
-      // PRINT
-      // =================================================
-
       worksheet.pageSetup =
         {
           orientation:
@@ -1819,13 +1870,6 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
           fitToHeight:
             0,
         };
-
-      worksheet.pageSetup.printTitlesRow =
-        "1:4";
-
-      // =================================================
-      // DOWNLOAD
-      // =================================================
 
       const buffer =
         await workbook.xlsx.writeBuffer();
@@ -1905,9 +1949,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
         <section className="flex-1 p-8">
 
-          {/* =================================================
-              HEADER
-          ================================================= */}
+          {/* HEADER */}
 
           <div className="mb-8">
 
@@ -1931,15 +1973,35 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                   Deposit Slips
                 </h1>
 
-                <p className="text-gray-500 mt-2">
-                  {location?.name ||
-                    "Location"}{" "}
-                  - Manage bank deposit records
-                </p>
+                <div className="flex items-center gap-3 mt-2">
+
+                  <p className="text-gray-500">
+                    {location?.name ||
+                      "Location"}{" "}
+                    - Bank Deposit Records
+                  </p>
+
+                  {!loadingRole && (
+                    <span
+                      className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                        isAdmin
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {isAdmin
+                        ? "👑 Admin"
+                        : "👤 Office Staff"}
+                    </span>
+                  )}
+
+                </div>
 
               </div>
 
               <div className="flex gap-3">
+
+                {/* EXPORT */}
 
                 <button
                   type="button"
@@ -1958,25 +2020,32 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                     : "📊 Export Excel"}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (
-                      showForm
-                    ) {
-                      clearForm();
-                    } else {
-                      setShowForm(
-                        true
-                      );
-                    }
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-medium"
-                >
-                  {showForm
-                    ? "✕ Close Form"
-                    : "+ Add Deposit"}
-                </button>
+                {/* ADD - ADMIN ONLY */}
+
+                {!loadingRole &&
+                  isAdmin && (
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        showForm
+                      ) {
+                        clearForm();
+                      } else {
+                        setShowForm(
+                          true
+                        );
+                      }
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-medium"
+                  >
+                    {showForm
+                      ? "✕ Close Form"
+                      : "+ Add Deposit"}
+                  </button>
+
+                )}
 
               </div>
 
@@ -1984,11 +2053,29 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
           </div>
 
-          {/* =================================================
-              FORM
-          ================================================= */}
+          {/* OFFICE STAFF NOTICE */}
 
-          {showForm && (
+          {!loadingRole &&
+            !isAdmin && (
+
+            <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4">
+
+              <p className="font-semibold text-blue-900">
+                👤 Office Staff Access
+              </p>
+
+              <p className="text-sm text-blue-700 mt-1">
+                You can view Deposit Slip records, open proof attachments, search, and export to Excel. Adding, editing, and deleting are restricted to Admin users.
+              </p>
+
+            </div>
+
+          )}
+
+          {/* FORM - ADMIN ONLY */}
+
+          {showForm &&
+            isAdmin && (
 
             <div className="bg-white rounded-xl shadow p-6 mb-8">
 
@@ -2028,9 +2115,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.deposit_date
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "deposit_date",
                           e.target.value
@@ -2042,7 +2127,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
                   </div>
 
-                  {/* SLIP NUMBER */}
+                  {/* SLIP */}
 
                   <div>
 
@@ -2055,9 +2140,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.deposit_slip_no
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "deposit_slip_no",
                           e.target.value
@@ -2082,9 +2165,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.bank
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "bank",
                           e.target.value
@@ -2110,9 +2191,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.account_name
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "account_name",
                           e.target.value
@@ -2136,9 +2215,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.account_no
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "account_no",
                           e.target.value
@@ -2162,9 +2239,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.depositor
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "depositor",
                           e.target.value
@@ -2191,9 +2266,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.amount
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "amount",
                           e.target.value
@@ -2206,7 +2279,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
                   </div>
 
-                  {/* DEPOSIT TYPE */}
+                  {/* TYPE */}
 
                   <div>
 
@@ -2218,9 +2291,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.deposit_type
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "deposit_type",
                           e.target.value
@@ -2262,9 +2333,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.reference_no
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "reference_no",
                           e.target.value
@@ -2287,9 +2356,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.status
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "status",
                           e.target.value
@@ -2338,21 +2405,19 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       />
 
                       <p className="text-xs text-gray-500 mt-2">
-                        Upload JPG, PNG, WEBP or other image. Maximum 5MB.
+                        Upload JPG, PNG, WEBP or another image. Maximum 5MB.
                       </p>
 
                       {attachmentFile && (
 
-                        <div className="mt-3 rounded-lg bg-blue-50 border border-blue-100 p-3">
+                        <div className="mt-3 bg-blue-50 border border-blue-100 p-3 rounded-lg">
 
-                          <p className="text-sm font-medium text-blue-800">
-                            Selected photo:
+                          <p className="text-sm text-blue-800 font-medium">
+                            Selected:
                           </p>
 
-                          <p className="text-sm text-blue-700 mt-1 break-all">
-                            {
-                              attachmentFile.name
-                            }
+                          <p className="text-sm text-blue-700">
+                            {attachmentFile.name}
                           </p>
 
                         </div>
@@ -2361,33 +2426,17 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
                       {form.attachment_url && (
 
-                        <div className="mt-4">
-
-                          <p className="text-sm text-gray-500 mb-2">
-                            Current proof
-                          </p>
-
-                          <button
-                            type="button"
-                            onClick={() =>
-                              viewAttachment(
-                                form.attachment_url
-                              )
-                            }
-                            className="inline-flex bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm"
-                          >
-                            👁 View Current Proof
-                          </button>
-
-                          {attachmentFile && (
-
-                            <p className="text-xs text-orange-600 mt-2">
-                              A new photo is selected. After saving, this record will point to the new photo. The old Storage file will remain.
-                            </p>
-
-                          )}
-
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            viewAttachment(
+                              form.attachment_url
+                            )
+                          }
+                          className="mt-3 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg"
+                        >
+                          👁 View Current Proof
+                        </button>
 
                       )}
 
@@ -2407,17 +2456,13 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       value={
                         form.remarks
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "remarks",
                           e.target.value
                         )
                       }
-                      rows={
-                        3
-                      }
+                      rows={3}
                       className="w-full border rounded-lg p-3"
                     />
 
@@ -2456,7 +2501,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                       saving ||
                       uploading
                     }
-                    className="border px-6 py-3 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                    className="border px-6 py-3 rounded-lg hover:bg-gray-50"
                   >
                     Cancel
                   </button>
@@ -2469,9 +2514,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
           )}
 
-          {/* =================================================
-              SEARCH
-          ================================================= */}
+          {/* SEARCH */}
 
           <div className="bg-white rounded-xl shadow p-5 mb-6">
 
@@ -2480,9 +2523,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
               value={
                 search
               }
-              onChange={(
-                e
-              ) =>
+              onChange={(e) =>
                 setSearch(
                   e.target.value
                 )
@@ -2493,9 +2534,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
           </div>
 
-          {/* =================================================
-              TABLE
-          ================================================= */}
+          {/* TABLE */}
 
           <div className="bg-white rounded-xl shadow overflow-hidden">
 
@@ -2556,51 +2595,51 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
                     <tr className="bg-[#1F3B64] text-white">
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Date
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Deposit Slip No.
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Bank
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Account Name
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Account No.
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Depositor
                       </th>
 
-                      <th className="px-4 py-4 text-right text-sm">
+                      <th className="px-4 py-4 text-right">
                         Amount
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Deposit Type
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Reference No.
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-center">
                         Status
                       </th>
 
-                      <th className="px-4 py-4 text-center text-sm">
+                      <th className="px-4 py-4 text-center">
                         Attachment
                       </th>
 
-                      <th className="px-4 py-4 text-center text-sm">
+                      <th className="px-4 py-4 text-center">
                         Actions
                       </th>
 
@@ -2653,7 +2692,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                               "—"}
                           </td>
 
-                          <td className="px-4 py-4 text-right font-semibold whitespace-nowrap">
+                          <td className="px-4 py-4 text-right font-semibold">
                             {formatCurrency(
                               Number(
                                 record.amount ||
@@ -2672,7 +2711,7 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
                               "—"}
                           </td>
 
-                          <td className="px-4 py-4">
+                          <td className="px-4 py-4 text-center">
 
                             <span className="px-3 py-1 rounded-full bg-slate-100 text-sm">
                               {record.status ||
@@ -2709,37 +2748,53 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
 
                           </td>
 
-                          {/* ACTIONS */}
+                          {/* ACTION */}
 
-                          <td className="px-4 py-4">
+                          <td className="px-4 py-4 text-center">
 
-                            <div className="flex gap-2 justify-center">
+                            {loadingRole ? (
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  startEdit(
-                                    record
-                                  )
-                                }
-                                className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm"
-                              >
-                                Edit
-                              </button>
+                              <span className="text-gray-400 text-xs">
+                                Checking...
+                              </span>
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  deleteRecord(
-                                    record
-                                  )
-                                }
-                                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm"
-                              >
-                                Delete
-                              </button>
+                            ) : isAdmin ? (
 
-                            </div>
+                              <div className="flex gap-2 justify-center">
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    startEdit(
+                                      record
+                                    )
+                                  }
+                                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm"
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    deleteRecord(
+                                      record
+                                    )
+                                  }
+                                  className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm"
+                                >
+                                  Delete
+                                </button>
+
+                              </div>
+
+                            ) : (
+
+                              <span className="inline-flex px-3 py-1.5 rounded-lg bg-slate-100 text-slate-500 text-xs font-medium">
+                                👁 View Only
+                              </span>
+
+                            )}
 
                           </td>
 

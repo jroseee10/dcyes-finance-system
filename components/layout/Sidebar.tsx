@@ -1,18 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import {
-  useEffect,
-  useState,
-} from "react";
-import {
-  usePathname,
-  useRouter,
-} from "next/navigation";
-
-import {
-  supabase,
-} from "@/lib/supabase";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
 
 type CurrentProfile = {
   id: number;
@@ -23,29 +14,16 @@ type CurrentProfile = {
 };
 
 export default function Sidebar() {
-  const pathname =
-    usePathname();
+  const pathname = usePathname();
+  const router = useRouter();
 
-  const router =
-    useRouter();
+  const [loggingOut, setLoggingOut] = useState(false);
 
-  const [
-    loggingOut,
-    setLoggingOut,
-  ] = useState(false);
+  const [profile, setProfile] =
+    useState<CurrentProfile | null>(null);
 
-  const [
-    profile,
-    setProfile,
-  ] =
-    useState<CurrentProfile | null>(
-      null
-    );
-
-  const [
-    loadingProfile,
-    setLoadingProfile,
-  ] = useState(true);
+  const [loadingProfile, setLoadingProfile] =
+    useState(true);
 
   // =====================================================
   // LOAD CURRENT USER PROFILE
@@ -56,41 +34,36 @@ export default function Sidebar() {
 
     try {
       const {
-        data: authData,
-        error: authError,
-      } =
-        await supabase.auth.getUser();
+        data: sessionData,
+        error: sessionError,
+      } = await supabase.auth.getSession();
 
-      if (
-        authError ||
-        !authData.user
-      ) {
+      if (sessionError) {
         console.error(
-          "Auth user error:",
-          authError
+          "Session error:",
+          sessionError
         );
 
         setProfile(null);
+        router.replace("/login");
+        return;
+      }
 
-        router.replace(
-          "/login"
-        );
-
+      if (!sessionData.session) {
+        setProfile(null);
+        router.replace("/login");
         return;
       }
 
       const authUser =
-        authData.user;
+        sessionData.session.user;
 
       if (!authUser.email) {
         setProfile(null);
 
         await supabase.auth.signOut();
 
-        router.replace(
-          "/login"
-        );
-
+        router.replace("/login");
         return;
       }
 
@@ -102,10 +75,7 @@ export default function Sidebar() {
         .select(
           "id, name, email, position, status"
         )
-        .eq(
-          "email",
-          authUser.email
-        )
+        .eq("email", authUser.email)
         .maybeSingle();
 
       if (profileError) {
@@ -115,7 +85,6 @@ export default function Sidebar() {
         );
 
         setProfile(null);
-
         return;
       }
 
@@ -125,7 +94,6 @@ export default function Sidebar() {
         );
 
         setProfile(null);
-
         return;
       }
 
@@ -134,12 +102,9 @@ export default function Sidebar() {
       // ===============================================
 
       if (
-        String(
-          profileData.status || ""
-        )
+        String(profileData.status || "")
           .trim()
-          .toLowerCase() !==
-        "active"
+          .toLowerCase() !== "active"
       ) {
         alert(
           "Your account is inactive. Please contact the administrator."
@@ -147,10 +112,7 @@ export default function Sidebar() {
 
         await supabase.auth.signOut();
 
-        router.replace(
-          "/login"
-        );
-
+        router.replace("/login");
         router.refresh();
 
         return;
@@ -180,12 +142,9 @@ export default function Sidebar() {
   // =====================================================
 
   const isAdmin =
-    String(
-      profile?.position || ""
-    )
+    String(profile?.position || "")
       .trim()
-      .toLowerCase() ===
-    "admin";
+      .toLowerCase() === "admin";
 
   // =====================================================
   // ACTIVE LINK
@@ -194,19 +153,11 @@ export default function Sidebar() {
   const isActive = (
     href: string
   ) => {
-    if (
-      href ===
-      "/dashboard"
-    ) {
-      return (
-        pathname ===
-        "/dashboard"
-      );
+    if (href === "/dashboard") {
+      return pathname === "/dashboard";
     }
 
-    return pathname.startsWith(
-      href
-    );
+    return pathname.startsWith(href);
   };
 
   // =====================================================
@@ -241,9 +192,7 @@ export default function Sidebar() {
     setLoggingOut(true);
 
     try {
-      const {
-        error,
-      } =
+      const { error } =
         await supabase.auth.signOut();
 
       if (error) {
@@ -256,17 +205,11 @@ export default function Sidebar() {
           "Hindi makapag-logout. Pakisubukan ulit."
         );
 
-        setLoggingOut(
-          false
-        );
-
+        setLoggingOut(false);
         return;
       }
 
-      router.replace(
-        "/login"
-      );
-
+      router.replace("/login");
       router.refresh();
     } catch (error) {
       console.error(
@@ -278,9 +221,7 @@ export default function Sidebar() {
         "May error habang nagla-logout."
       );
 
-      setLoggingOut(
-        false
-      );
+      setLoggingOut(false);
     }
   }
 
@@ -291,7 +232,9 @@ export default function Sidebar() {
   return (
     <aside className="w-64 min-h-screen bg-[#0f172a] text-white flex flex-col">
 
-      {/* BRAND */}
+      {/* =================================================
+          BRAND
+      ================================================= */}
 
       <div className="px-6 py-6 border-b border-slate-700">
 
@@ -305,7 +248,9 @@ export default function Sidebar() {
 
       </div>
 
-      {/* NAVIGATION */}
+      {/* =================================================
+          NAVIGATION
+      ================================================= */}
 
       <nav className="flex-1 px-4 py-6 space-y-2">
 
@@ -314,9 +259,7 @@ export default function Sidebar() {
         <Link
           href="/dashboard"
           className={
-            linkClass(
-              "/dashboard"
-            )
+            linkClass("/dashboard")
           }
         >
           <span className="text-xl">
@@ -347,11 +290,16 @@ export default function Sidebar() {
           </span>
         </Link>
 
-        {/* ADMIN ONLY */}
+        {/* =================================================
+            ADMIN ONLY
+        ================================================= */}
 
         {!loadingProfile &&
           isAdmin && (
             <>
+
+              {/* USERS */}
+
               <Link
                 href="/dashboard/users"
                 className={
@@ -369,6 +317,27 @@ export default function Sidebar() {
                 </span>
               </Link>
 
+              {/* ACTIVITY LOGS */}
+
+              <Link
+                href="/dashboard/activity-logs"
+                className={
+                  linkClass(
+                    "/dashboard/activity-logs"
+                  )
+                }
+              >
+                <span className="text-xl">
+                  📋
+                </span>
+
+                <span>
+                  Activity Logs
+                </span>
+              </Link>
+
+              {/* SETTINGS */}
+
               <Link
                 href="/dashboard/settings"
                 className={
@@ -385,12 +354,15 @@ export default function Sidebar() {
                   Settings
                 </span>
               </Link>
+
             </>
           )}
 
       </nav>
 
-      {/* USER AREA */}
+      {/* =================================================
+          USER AREA
+      ================================================= */}
 
       <div className="border-t border-slate-700 p-4">
 
@@ -409,24 +381,29 @@ export default function Sidebar() {
           "
         >
 
-          <div className="
-            w-10
-            h-10
-            rounded-full
-            bg-slate-700
-            flex
-            items-center
-            justify-center
-            text-lg
-          ">
+          {/* AVATAR */}
 
+          <div
+            className="
+              w-10
+              h-10
+              rounded-full
+              bg-slate-700
+              flex
+              items-center
+              justify-center
+              text-lg
+              flex-shrink-0
+            "
+          >
             {profile?.name
               ? profile.name
                   .charAt(0)
                   .toUpperCase()
               : "👤"}
-
           </div>
+
+          {/* USER INFO */}
 
           <div className="flex-1 min-w-0">
 
@@ -475,7 +452,6 @@ export default function Sidebar() {
             disabled:cursor-not-allowed
           "
         >
-
           <span className="text-xl">
             🚪
           </span>
@@ -485,7 +461,6 @@ export default function Sidebar() {
               ? "Logging out..."
               : "Logout"}
           </span>
-
         </button>
 
       </div>

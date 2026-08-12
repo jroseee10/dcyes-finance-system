@@ -1,16 +1,7 @@
 "use client";
 
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
-
-import {
-  useParams,
-  useRouter,
-} from "next/navigation";
-
+import { useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
 import Sidebar from "@/components/layout/Sidebar";
 import { supabase } from "@/lib/supabase";
 import ExcelJS from "exceljs";
@@ -19,43 +10,20 @@ type TelegraphicTransfer = {
   id: number;
   location_id: number;
   transfer_date: string;
-
   tt_ref_no: string | null;
-
   applicant_sender: string | null;
-
   beneficiary_name: string | null;
-
   beneficiary_bank: string | null;
-
-  beneficiary_account_no:
-    | string
-    | null;
-
-  swift_branch_code:
-    | string
-    | null;
-
+  beneficiary_account_no: string | null;
+  swift_branch_code: string | null;
   amount: number | null;
-
   currency: string | null;
-
   charges: number | null;
-
   total_debited: number | null;
-
-  purpose_of_payment:
-    | string
-    | null;
-
+  purpose_of_payment: string | null;
   status: string | null;
-
   remarks: string | null;
-
-  attachment_url:
-    | string
-    | null;
-
+  attachment_url: string | null;
   created_at: string;
 };
 
@@ -64,122 +32,188 @@ type Location = {
   name: string;
 };
 
-const emptyForm = {
-  transfer_date:
-    new Date()
-      .toISOString()
-      .slice(0, 10),
-
-  tt_ref_no: "",
-
-  applicant_sender: "",
-
-  beneficiary_name: "",
-
-  beneficiary_bank: "",
-
-  beneficiary_account_no: "",
-
-  swift_branch_code: "",
-
-  amount: "",
-
-  currency: "PHP",
-
-  charges: "",
-
-  purpose_of_payment: "",
-
-  status: "Pending",
-
-  remarks: "",
-
-  attachment_url: "",
+type CurrentUserProfile = {
+  name: string;
+  email: string;
+  position: string;
 };
 
+const makeEmptyForm = () => ({
+  transfer_date: new Date().toISOString().slice(0, 10),
+  tt_ref_no: "",
+  applicant_sender: "",
+  beneficiary_name: "",
+  beneficiary_bank: "",
+  beneficiary_account_no: "",
+  swift_branch_code: "",
+  amount: "",
+  currency: "PHP",
+  charges: "",
+  purpose_of_payment: "",
+  status: "Pending",
+  remarks: "",
+  attachment_url: "",
+});
+
 export default function TelegraphicTransferPage() {
-  const params =
-    useParams();
+  const params = useParams();
+  const router = useRouter();
 
-  const router =
-    useRouter();
+  const locationId = Number(params.id);
 
-  const locationId =
-    Number(params.id);
+  const [location, setLocation] = useState<Location | null>(null);
 
-  const [
-    location,
-    setLocation,
-  ] =
-    useState<Location | null>(
-      null
-    );
+  const [records, setRecords] =
+    useState<TelegraphicTransfer[]>([]);
 
-  const [
-    records,
-    setRecords,
-  ] =
-    useState<
-      TelegraphicTransfer[]
-    >([]);
+  const [form, setForm] = useState(makeEmptyForm());
 
-  const [
-    form,
-    setForm,
-  ] =
-    useState(emptyForm);
+  const [editingId, setEditingId] =
+    useState<number | null>(null);
 
-  const [
-    editingId,
-    setEditingId,
-  ] =
-    useState<number | null>(
-      null
-    );
+  const [showForm, setShowForm] = useState(false);
 
-  const [
-    showForm,
-    setShowForm,
-  ] =
-    useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
-  const [
-    loading,
-    setLoading,
-  ] =
-    useState(true);
+  const [attachmentFile, setAttachmentFile] =
+    useState<File | null>(null);
 
-  const [
-    saving,
-    setSaving,
-  ] =
-    useState(false);
+  const [search, setSearch] = useState("");
 
-  const [
-    exporting,
-    setExporting,
-  ] =
-    useState(false);
+  // =====================================================
+  // ROLE
+  // =====================================================
 
-  const [
-    uploading,
-    setUploading,
-  ] =
-    useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [loadingRole, setLoadingRole] = useState(true);
 
-  const [
-    attachmentFile,
-    setAttachmentFile,
-  ] =
-    useState<File | null>(
-      null
-    );
+  const [currentProfile, setCurrentProfile] =
+    useState<CurrentUserProfile | null>(null);
 
-  const [
-    search,
-    setSearch,
-  ] =
-    useState("");
+  async function loadCurrentUserRole() {
+    setLoadingRole(true);
+
+    try {
+      const {
+        data: authData,
+        error: authError,
+      } = await supabase.auth.getUser();
+
+      if (
+        authError ||
+        !authData.user ||
+        !authData.user.email
+      ) {
+        console.error(
+          "TT auth error:",
+          authError
+        );
+
+        setIsAdmin(false);
+        return;
+      }
+
+      const {
+        data: profile,
+        error: profileError,
+      } = await supabase
+        .from("users")
+        .select("name, email, position, status")
+        .eq("email", authData.user.email)
+        .maybeSingle();
+
+      if (profileError) {
+        console.error(
+          "TT profile error:",
+          profileError
+        );
+
+        setIsAdmin(false);
+        return;
+      }
+
+      const active =
+        String(profile?.status || "")
+          .trim()
+          .toLowerCase() === "active";
+
+      const admin =
+        String(profile?.position || "")
+          .trim()
+          .toLowerCase() === "admin";
+
+      setIsAdmin(active && admin);
+
+      setCurrentProfile({
+        name: profile?.name || "",
+        email:
+          profile?.email ||
+          authData.user.email,
+        position: profile?.position || "",
+      });
+    } catch (error) {
+      console.error(
+        "TT role check error:",
+        error
+      );
+
+      setIsAdmin(false);
+    } finally {
+      setLoadingRole(false);
+    }
+  }
+
+  // =====================================================
+  // ACTIVITY LOG
+  // =====================================================
+
+  async function addActivityLog({
+    action,
+    recordId,
+    description,
+  }: {
+    action: string;
+    recordId: number;
+    description: string;
+  }) {
+    try {
+      if (!currentProfile) {
+        console.warn(
+          "Activity log skipped: user profile not loaded."
+        );
+        return;
+      }
+
+      const { error } = await supabase
+        .from("activity_logs")
+        .insert({
+          user_email: currentProfile.email,
+          user_name: currentProfile.name,
+          user_position: currentProfile.position,
+          action,
+          module: "Telegraphic Transfer",
+          record_id: recordId,
+          location_id: locationId,
+          location_name: location?.name || null,
+          description,
+        });
+
+      if (error) {
+        console.error(
+          "TT activity log error:",
+          error
+        );
+      }
+    } catch (error) {
+      console.error(
+        "TT activity log unexpected error:",
+        error
+      );
+    }
+  }
 
   // =====================================================
   // LOAD DATA
@@ -188,228 +222,172 @@ export default function TelegraphicTransferPage() {
   async function loadData() {
     setLoading(true);
 
-    const {
-      data: locationData,
-      error: locationError,
-    } =
-      await supabase
+    try {
+      const {
+        data: locationData,
+        error: locationError,
+      } = await supabase
         .from("locations")
         .select("id, name")
-        .eq(
-          "id",
-          locationId
-        )
+        .eq("id", locationId)
         .single();
 
-    if (locationError) {
-      console.error(
-        locationError
-      );
+      if (locationError) {
+        console.error(locationError);
 
-      alert(
-        "Hindi ma-load ang location: " +
-          locationError.message
-      );
-
-      setLoading(false);
-
-      return;
-    }
-
-    setLocation(
-      locationData
-    );
-
-    const {
-      data,
-      error,
-    } =
-      await supabase
-        .from(
-          "telegraphic_transfers"
-        )
-        .select("*")
-        .eq(
-          "location_id",
-          locationId
-        )
-        .order(
-          "transfer_date",
-          {
-            ascending:
-              false,
-          }
+        alert(
+          "Hindi ma-load ang location: " +
+            locationError.message
         );
 
-    if (error) {
+        return;
+      }
+
+      setLocation(locationData);
+
+      const {
+        data,
+        error,
+      } = await supabase
+        .from("telegraphic_transfers")
+        .select("*")
+        .eq("location_id", locationId)
+        .order("transfer_date", {
+          ascending: false,
+        });
+
+      if (error) {
+        console.error(error);
+
+        alert(
+          "Hindi makuha ang Telegraphic Transfers: " +
+            error.message
+        );
+
+        return;
+      }
+
+      setRecords(
+        (data || []) as TelegraphicTransfer[]
+      );
+    } catch (error) {
       console.error(
+        "Load TT error:",
         error
       );
-
-      alert(
-        "Hindi makuha ang Telegraphic Transfers: " +
-          error.message
-      );
-
+    } finally {
       setLoading(false);
-
-      return;
     }
-
-    setRecords(
-      (data || []) as TelegraphicTransfer[]
-    );
-
-    setLoading(false);
   }
 
   useEffect(() => {
     if (
       !locationId ||
-      Number.isNaN(
-        locationId
-      )
+      Number.isNaN(locationId)
     ) {
       return;
     }
 
+    loadCurrentUserRole();
     loadData();
   }, [locationId]);
 
   // =====================================================
-  // UPDATE FIELD
+  // FORM HELPERS
   // =====================================================
 
   function updateField(
-    field:
-      keyof typeof emptyForm,
+    field: keyof ReturnType<typeof makeEmptyForm>,
     value: string
   ) {
-    setForm(
-      (prev) => ({
-        ...prev,
-        [field]: value,
-      })
-    );
+    setForm((prev) => ({
+      ...prev,
+      [field]: value,
+    }));
   }
-
-  // =====================================================
-  // CLEAR FORM
-  // =====================================================
 
   function clearForm() {
-    setForm(
-      emptyForm
-    );
-
-    setEditingId(
-      null
-    );
-
-    setAttachmentFile(
-      null
-    );
-
-    setShowForm(
-      false
-    );
+    setForm(makeEmptyForm());
+    setEditingId(null);
+    setAttachmentFile(null);
+    setShowForm(false);
   }
-
-  // =====================================================
-  // CALCULATE TOTAL
-  // =====================================================
 
   function calculateTotal() {
     const amount =
-      Number(
-        form.amount
-      ) || 0;
+      Number(form.amount) || 0;
 
     const charges =
-      Number(
-        form.charges
-      ) || 0;
+      Number(form.charges) || 0;
 
-    return (
-      amount +
-      charges
-    );
+    return amount + charges;
   }
 
   // =====================================================
-  // FILE SELECT
+  // FILE
   // =====================================================
 
   function handleFileChange(
     e: React.ChangeEvent<HTMLInputElement>
   ) {
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-upload o pagpalit ng TT attachment."
+      );
+
+      e.target.value = "";
+      return;
+    }
+
     const file =
       e.target.files?.[0];
 
     if (!file) {
-      setAttachmentFile(
-        null
-      );
-
+      setAttachmentFile(null);
       return;
     }
 
-    // Image only
-    if (
-      !file.type.startsWith(
-        "image/"
-      )
-    ) {
+    if (!file.type.startsWith("image/")) {
       alert(
         "Image file lang ang puwedeng i-upload."
       );
 
-      e.target.value =
-        "";
-
+      e.target.value = "";
       return;
     }
 
-    // Maximum 5 MB
     if (
       file.size >
-      5 *
-        1024 *
-        1024
+      5 * 1024 * 1024
     ) {
       alert(
         "Maximum file size ay 5MB."
       );
 
-      e.target.value =
-        "";
-
+      e.target.value = "";
       return;
     }
 
-    setAttachmentFile(
-      file
-    );
+    setAttachmentFile(file);
   }
-
-  // =====================================================
-  // UPLOAD ATTACHMENT
-  // =====================================================
 
   async function uploadAttachment(
     file: File
   ) {
-    setUploading(
-      true
-    );
+    if (!isAdmin) {
+      throw new Error(
+        "Admin only ang pag-upload ng TT attachment."
+      );
+    }
+
+    setUploading(true);
 
     try {
       const extension =
         file.name
           .split(".")
           .pop()
-          ?.toLowerCase() ||
-        "jpg";
+          ?.toLowerCase() || "jpg";
 
       const safeExtension =
         extension.replace(
@@ -427,29 +405,19 @@ export default function TelegraphicTransferPage() {
 
       const {
         error: uploadError,
-      } =
-        await supabase.storage
-          .from(
-            "receipts"
-          )
-          .upload(
-            filePath,
-            file,
-            {
-              cacheControl:
-                "3600",
+      } = await supabase.storage
+        .from("receipts")
+        .upload(
+          filePath,
+          file,
+          {
+            cacheControl: "3600",
+            upsert: false,
+            contentType: file.type,
+          }
+        );
 
-              upsert:
-                false,
-
-              contentType:
-                file.type,
-            }
-          );
-
-      if (
-        uploadError
-      ) {
+      if (uploadError) {
         console.error(
           "TT attachment upload error:",
           uploadError
@@ -460,29 +428,19 @@ export default function TelegraphicTransferPage() {
         );
       }
 
-      const {
-        data,
-      } =
+      const { data } =
         supabase.storage
-          .from(
-            "receipts"
-          )
-          .getPublicUrl(
-            filePath
-          );
+          .from("receipts")
+          .getPublicUrl(filePath);
 
-      return (
-        data.publicUrl
-      );
+      return data.publicUrl;
     } finally {
-      setUploading(
-        false
-      );
+      setUploading(false);
     }
   }
 
   // =====================================================
-  // VIEW ATTACHMENT WITH SIGNED URL
+  // VIEW ATTACHMENT
   // =====================================================
 
   async function viewAttachment(
@@ -496,29 +454,29 @@ export default function TelegraphicTransferPage() {
         url.indexOf(marker);
 
       if (markerIndex === -1) {
-        alert("Invalid attachment URL.");
+        alert(
+          "Invalid attachment URL."
+        );
         return;
       }
 
       const filePath =
         decodeURIComponent(
           url.substring(
-            markerIndex + marker.length
+            markerIndex +
+              marker.length
           )
         );
 
       const {
         data,
         error,
-      } =
-        await supabase.storage
-          .from(
-            "receipts"
-          )
-          .createSignedUrl(
-            filePath,
-            60 * 5
-          );
+      } = await supabase.storage
+        .from("receipts")
+        .createSignedUrl(
+          filePath,
+          60 * 5
+        );
 
       if (error) {
         console.error(
@@ -552,7 +510,7 @@ export default function TelegraphicTransferPage() {
   }
 
   // =====================================================
-  // SAVE RECORD
+  // SAVE - ADMIN ONLY
   // =====================================================
 
   async function saveRecord(
@@ -560,13 +518,17 @@ export default function TelegraphicTransferPage() {
   ) {
     e.preventDefault();
 
-    if (
-      !form.transfer_date
-    ) {
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-add o pag-edit ng Telegraphic Transfer."
+      );
+      return;
+    }
+
+    if (!form.transfer_date) {
       alert(
         "Ilagay muna ang transfer date."
       );
-
       return;
     }
 
@@ -576,7 +538,6 @@ export default function TelegraphicTransferPage() {
       alert(
         "Ilagay muna ang Applicant / Sender."
       );
-
       return;
     }
 
@@ -586,37 +547,25 @@ export default function TelegraphicTransferPage() {
       alert(
         "Ilagay muna ang Beneficiary Name."
       );
-
       return;
     }
 
     const amount =
-      Number(
-        form.amount
-      ) || 0;
+      Number(form.amount) || 0;
 
     const charges =
-      Number(
-        form.charges
-      ) || 0;
+      Number(form.charges) || 0;
 
     const totalDebited =
-      amount +
-      charges;
+      amount + charges;
 
-    setSaving(
-      true
-    );
+    setSaving(true);
 
     try {
       let finalAttachmentUrl =
-        form.attachment_url ||
-        null;
+        form.attachment_url || null;
 
-      // Upload only when a new file is selected
-      if (
-        attachmentFile
-      ) {
+      if (attachmentFile) {
         finalAttachmentUrl =
           await uploadAttachment(
             attachmentFile
@@ -624,8 +573,7 @@ export default function TelegraphicTransferPage() {
       }
 
       const payload = {
-        location_id:
-          locationId,
+        location_id: locationId,
 
         transfer_date:
           form.transfer_date,
@@ -678,36 +626,21 @@ export default function TelegraphicTransferPage() {
           finalAttachmentUrl,
       };
 
-      // =================================================
-      // UPDATE
-      // =================================================
-
       if (
-        editingId !==
-        null
+        editingId !== null
       ) {
         const {
           error,
-        } =
-          await supabase
-            .from(
-              "telegraphic_transfers"
-            )
-            .update(
-              payload
-            )
-            .eq(
-              "id",
-              editingId
-            )
-            .eq(
-              "location_id",
-              locationId
-            );
+        } = await supabase
+          .from("telegraphic_transfers")
+          .update(payload)
+          .eq("id", editingId)
+          .eq(
+            "location_id",
+            locationId
+          );
 
-        if (
-          error
-        ) {
+        if (error) {
           alert(
             "Hindi ma-update ang record: " +
               error.message
@@ -716,28 +649,35 @@ export default function TelegraphicTransferPage() {
           return;
         }
 
+        await addActivityLog({
+          action: "Updated",
+          recordId: editingId,
+          description: `Updated Telegraphic Transfer${
+            form.tt_ref_no.trim()
+              ? ` ${form.tt_ref_no.trim()}`
+              : ""
+          } for ${form.beneficiary_name.trim()} - ${
+            form.currency || "PHP"
+          } ${totalDebited.toLocaleString("en-PH", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`,
+        });
+
         alert(
           "Telegraphic Transfer successfully updated!"
         );
       } else {
-        // =================================================
-        // INSERT
-        // =================================================
-
         const {
+          data: insertedData,
           error,
-        } =
-          await supabase
-            .from(
-              "telegraphic_transfers"
-            )
-            .insert(
-              payload
-            );
+        } = await supabase
+          .from("telegraphic_transfers")
+          .insert(payload)
+          .select("id")
+          .single();
 
-        if (
-          error
-        ) {
+        if (error) {
           alert(
             "Hindi ma-save ang record: " +
               error.message
@@ -746,27 +686,27 @@ export default function TelegraphicTransferPage() {
           return;
         }
 
+        await addActivityLog({
+          action: "Added",
+          recordId: insertedData.id,
+          description: `Added Telegraphic Transfer${
+            form.tt_ref_no.trim()
+              ? ` ${form.tt_ref_no.trim()}`
+              : ""
+          } for ${form.beneficiary_name.trim()} - ${
+            form.currency || "PHP"
+          } ${totalDebited.toLocaleString("en-PH", {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })}`,
+        });
+
         alert(
           "Telegraphic Transfer successfully saved!"
         );
       }
 
-      setForm(
-        emptyForm
-      );
-
-      setAttachmentFile(
-        null
-      );
-
-      setEditingId(
-        null
-      );
-
-      setShowForm(
-        false
-      );
-
+      clearForm();
       await loadData();
     } catch (error) {
       console.error(
@@ -776,112 +716,103 @@ export default function TelegraphicTransferPage() {
 
       alert(
         "Hindi ma-save ang Telegraphic Transfer: " +
-          (error instanceof Error
-            ? error.message
-            : "Unknown error")
+          (
+            error instanceof Error
+              ? error.message
+              : "Unknown error"
+          )
       );
     } finally {
-      setSaving(
-        false
-      );
-
-      setUploading(
-        false
-      );
+      setSaving(false);
+      setUploading(false);
     }
   }
 
   // =====================================================
-  // EDIT
+  // EDIT - ADMIN ONLY
   // =====================================================
 
   function startEdit(
     record: TelegraphicTransfer
   ) {
-    setEditingId(
-      record.id
-    );
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-edit ng Telegraphic Transfer."
+      );
 
-    setAttachmentFile(
-      null
-    );
+      return;
+    }
+
+    setEditingId(record.id);
+    setAttachmentFile(null);
 
     setForm({
       transfer_date:
-        record.transfer_date ||
-        "",
+        record.transfer_date || "",
 
       tt_ref_no:
-        record.tt_ref_no ||
-        "",
+        record.tt_ref_no || "",
 
       applicant_sender:
-        record.applicant_sender ||
-        "",
+        record.applicant_sender || "",
 
       beneficiary_name:
-        record.beneficiary_name ||
-        "",
+        record.beneficiary_name || "",
 
       beneficiary_bank:
-        record.beneficiary_bank ||
-        "",
+        record.beneficiary_bank || "",
 
       beneficiary_account_no:
-        record.beneficiary_account_no ||
-        "",
+        record.beneficiary_account_no || "",
 
       swift_branch_code:
-        record.swift_branch_code ||
-        "",
+        record.swift_branch_code || "",
 
       amount:
-        record.amount?.toString() ||
-        "",
+        record.amount?.toString() || "",
 
       currency:
-        record.currency ||
-        "PHP",
+        record.currency || "PHP",
 
       charges:
-        record.charges?.toString() ||
-        "",
+        record.charges?.toString() || "",
 
       purpose_of_payment:
-        record.purpose_of_payment ||
-        "",
+        record.purpose_of_payment || "",
 
       status:
-        record.status ||
-        "Pending",
+        record.status || "Pending",
 
       remarks:
-        record.remarks ||
-        "",
+        record.remarks || "",
 
       attachment_url:
-        record.attachment_url ||
-        "",
+        record.attachment_url || "",
     });
 
-    setShowForm(
-      true
-    );
+    setShowForm(true);
 
     window.scrollTo({
       top: 0,
-      behavior:
-        "smooth",
+      behavior: "smooth",
     });
   }
 
   // =====================================================
-  // DELETE RECORD
+  // DELETE - ADMIN ONLY
   // =====================================================
 
   async function deleteRecord(
     record: TelegraphicTransfer
   ) {
+    if (!isAdmin) {
+      alert(
+        "Admin only ang pag-delete ng Telegraphic Transfer."
+      );
+
+      return;
+    }
+
     const confirmed =
       window.confirm(
         `Sigurado ka bang gusto mong i-delete ang TT record${
@@ -893,32 +824,22 @@ export default function TelegraphicTransferPage() {
 Note: Hindi mabubura ang uploaded attachment sa Storage.`
       );
 
-    if (
-      !confirmed
-    ) {
+    if (!confirmed) {
       return;
     }
 
     const {
       error,
-    } =
-      await supabase
-        .from(
-          "telegraphic_transfers"
-        )
-        .delete()
-        .eq(
-          "id",
-          record.id
-        )
-        .eq(
-          "location_id",
-          locationId
-        );
+    } = await supabase
+      .from("telegraphic_transfers")
+      .delete()
+      .eq("id", record.id)
+      .eq(
+        "location_id",
+        locationId
+      );
 
-    if (
-      error
-    ) {
+    if (error) {
       alert(
         "Hindi ma-delete ang record: " +
           error.message
@@ -927,8 +848,26 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
       return;
     }
 
+    await addActivityLog({
+      action: "Deleted",
+      recordId: record.id,
+      description: `Deleted Telegraphic Transfer${
+        record.tt_ref_no
+          ? ` ${record.tt_ref_no}`
+          : ""
+      } for ${record.beneficiary_name || "Unknown beneficiary"} - ${
+        record.currency || "PHP"
+      } ${Number(record.total_debited || 0).toLocaleString(
+        "en-PH",
+        {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        }
+      )}`,
+    });
+
     alert(
-      "Telegraphic Transfer successfully deleted! Attachment remains in Storage."
+      "Telegraphic Transfer successfully deleted!"
     );
 
     await loadData();
@@ -945,9 +884,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
           .trim()
           .toLowerCase();
 
-      if (
-        !keyword
-      ) {
+      if (!keyword) {
         return records;
       }
 
@@ -955,29 +892,18 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
         (record) =>
           [
             record.tt_ref_no,
-
             record.applicant_sender,
-
             record.beneficiary_name,
-
             record.beneficiary_bank,
-
             record.beneficiary_account_no,
-
             record.purpose_of_payment,
-
             record.status,
-
             record.remarks,
           ]
-            .filter(
-              Boolean
-            )
+            .filter(Boolean)
             .join(" ")
             .toLowerCase()
-            .includes(
-              keyword
-            )
+            .includes(keyword)
       );
     }, [
       records,
@@ -985,15 +911,12 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
     ]);
 
   // =====================================================
-  // OVERALL TOTAL
+  // TOTAL
   // =====================================================
 
   const overallTotal =
     filteredRecords.reduce(
-      (
-        sum,
-        record
-      ) =>
+      (sum, record) =>
         sum +
         Number(
           record.total_debited ||
@@ -1003,57 +926,42 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
     );
 
   // =====================================================
-  // CURRENCY
+  // FORMATTERS
   // =====================================================
 
-  const formatCurrency = (
+  function formatCurrency(
     amount: number,
     currency = "PHP"
-  ) => {
+  ) {
     try {
       return new Intl.NumberFormat(
         "en-PH",
         {
-          style:
-            "currency",
-
+          style: "currency",
           currency:
-            currency ||
-            "PHP",
-
-          minimumFractionDigits:
-            2,
+            currency || "PHP",
+          minimumFractionDigits: 2,
         }
-      ).format(
-        amount
-      );
+      ).format(amount);
     } catch {
       return `${currency} ${amount.toFixed(
         2
       )}`;
     }
-  };
-
-  // =====================================================
-  // DATE
-  // =====================================================
+  }
 
   function formatDate(
     date: string
   ) {
-    if (
-      !date
-    ) {
+    if (!date) {
       return "";
     }
 
-    // Avoid timezone shift
     const parts =
       date.split("-");
 
     if (
-      parts.length !==
-      3
+      parts.length !== 3
     ) {
       return date;
     }
@@ -1074,47 +982,35 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
     ).toLocaleDateString(
       "en-US",
       {
-        month:
-          "long",
-
-        day:
-          "numeric",
-
-        year:
-          "numeric",
+        month: "long",
+        day: "numeric",
+        year: "numeric",
       }
     );
   }
 
   // =====================================================
-  // EXCEL EXPORT
+  // EXCEL
   // =====================================================
 
   async function exportToExcel() {
-    if (
-      !location
-    ) {
+    if (!location) {
       alert(
         "Location not found."
       );
-
       return;
     }
 
     if (
-      records.length ===
-      0
+      records.length === 0
     ) {
       alert(
         "Walang Telegraphic Transfer records na ie-export."
       );
-
       return;
     }
 
-    setExporting(
-      true
-    );
+    setExporting(true);
 
     try {
       const workbook =
@@ -1123,560 +1019,227 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
       workbook.creator =
         "DCYES Finance System";
 
-      workbook.lastModifiedBy =
-        "DCYES Finance System";
-
-      workbook.created =
-        new Date();
-
-      workbook.modified =
-        new Date();
-
       const worksheet =
         workbook.addWorksheet(
           "Telegraphic Transfer"
         );
 
-      worksheet.columns =
-        [
-          {
-            header:
-              "Date",
-
-            key:
-              "date",
-
-            width: 20,
-          },
-
-          {
-            header:
-              "TT Ref. No.",
-
-            key:
-              "ref",
-
-            width: 18,
-          },
-
-          {
-            header:
-              "Applicant / Sender",
-
-            key:
-              "sender",
-
-            width: 25,
-          },
-
-          {
-            header:
-              "Beneficiary Name",
-
-            key:
-              "beneficiary",
-
-            width: 25,
-          },
-
-          {
-            header:
-              "Beneficiary Bank",
-
-            key:
-              "bank",
-
-            width: 25,
-          },
-
-          {
-            header:
-              "Account No.",
-
-            key:
-              "account",
-
-            width: 22,
-          },
-
-          {
-            header:
-              "SWIFT / Branch Code",
-
-            key:
-              "swift",
-
-            width: 22,
-          },
-
-          {
-            header:
-              "Amount",
-
-            key:
-              "amount",
-
-            width: 18,
-          },
-
-          {
-            header:
-              "Currency",
-
-            key:
-              "currency",
-
-            width: 12,
-          },
-
-          {
-            header:
-              "Charges",
-
-            key:
-              "charges",
-
-            width: 18,
-          },
-
-          {
-            header:
-              "Total Debited",
-
-            key:
-              "total",
-
-            width: 20,
-          },
-
-          {
-            header:
-              "Purpose of Payment",
-
-            key:
-              "purpose",
-
-            width: 28,
-          },
-
-          {
-            header:
-              "Status",
-
-            key:
-              "status",
-
-            width: 15,
-          },
-
-          {
-            header:
-              "Remarks",
-
-            key:
-              "remarks",
-
-            width: 28,
-          },
-
-          {
-            header:
-              "Attachment",
-
-            key:
-              "attachment",
-
-            width: 45,
-          },
-        ];
-
-      // TITLE
+      worksheet.columns = [
+        {
+          header: "Date",
+          key: "date",
+          width: 20,
+        },
+        {
+          header: "TT Ref. No.",
+          key: "ref",
+          width: 18,
+        },
+        {
+          header: "Applicant / Sender",
+          key: "sender",
+          width: 25,
+        },
+        {
+          header: "Beneficiary Name",
+          key: "beneficiary",
+          width: 25,
+        },
+        {
+          header: "Beneficiary Bank",
+          key: "bank",
+          width: 25,
+        },
+        {
+          header: "Account No.",
+          key: "account",
+          width: 22,
+        },
+        {
+          header: "SWIFT / Branch Code",
+          key: "swift",
+          width: 22,
+        },
+        {
+          header: "Amount",
+          key: "amount",
+          width: 18,
+        },
+        {
+          header: "Currency",
+          key: "currency",
+          width: 12,
+        },
+        {
+          header: "Charges",
+          key: "charges",
+          width: 18,
+        },
+        {
+          header: "Total Debited",
+          key: "total",
+          width: 20,
+        },
+        {
+          header: "Purpose of Payment",
+          key: "purpose",
+          width: 28,
+        },
+        {
+          header: "Status",
+          key: "status",
+          width: 15,
+        },
+        {
+          header: "Remarks",
+          key: "remarks",
+          width: 28,
+        },
+        {
+          header: "Attachment",
+          key: "attachment",
+          width: 25,
+        },
+      ];
 
       worksheet.mergeCells(
         "A1:O1"
       );
 
       const titleCell =
-        worksheet.getCell(
-          "A1"
-        );
+        worksheet.getCell("A1");
 
       titleCell.value =
         `${location.name.toUpperCase()} - TELEGRAPHIC TRANSFER`;
 
-      titleCell.font =
-        {
-          name:
-            "Calibri",
+      titleCell.font = {
+        size: 16,
+        bold: true,
+        color: {
+          argb: "FFFFFFFF",
+        },
+      };
 
-          size: 16,
+      titleCell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: {
+          argb: "1F3B64",
+        },
+      };
 
-          bold: true,
-
-          color: {
-            argb:
-              "FFFFFFFF",
-          },
-        };
-
-      titleCell.fill =
-        {
-          type:
-            "pattern",
-
-          pattern:
-            "solid",
-
-          fgColor: {
-            argb:
-              "1F3B64",
-          },
-        };
-
-      titleCell.alignment =
-        {
-          horizontal:
-            "center",
-
-          vertical:
-            "middle",
-        };
-
-      worksheet.getRow(
-        1
-      ).height = 30;
-
-      // SUBTITLE
+      titleCell.alignment = {
+        horizontal: "center",
+        vertical: "middle",
+      };
 
       worksheet.mergeCells(
         "A2:O2"
       );
 
-      const subtitle =
-        worksheet.getCell(
-          "A2"
-        );
-
-      subtitle.value =
-        "DCYES";
-
-      subtitle.font =
-        {
-          name:
-            "Calibri",
-
-          size: 11,
-
-          italic:
-            true,
-
-          color: {
-            argb:
-              "1F3B64",
-          },
-        };
-
-      subtitle.alignment =
-        {
-          horizontal:
-            "center",
-
-          vertical:
-            "middle",
-        };
-
-      worksheet.getRow(
-        2
-      ).height = 22;
-
-      worksheet.getRow(
-        3
-      ).height = 8;
-
-      // HEADER
+      worksheet.getCell(
+        "A2"
+      ).value = "DCYES";
 
       const headerRow =
-        worksheet.getRow(
-          4
-        );
+        worksheet.getRow(4);
 
-      headerRow.values =
-        [
-          "Date",
-
-          "TT Ref. No.",
-
-          "Applicant / Sender",
-
-          "Beneficiary Name",
-
-          "Beneficiary Bank",
-
-          "Account No.",
-
-          "SWIFT / Branch Code",
-
-          "Amount",
-
-          "Currency",
-
-          "Charges",
-
-          "Total Debited",
-
-          "Purpose of Payment",
-
-          "Status",
-
-          "Remarks",
-
-          "Attachment",
-        ];
-
-      headerRow.height =
-        34;
+      headerRow.values = [
+        "Date",
+        "TT Ref. No.",
+        "Applicant / Sender",
+        "Beneficiary Name",
+        "Beneficiary Bank",
+        "Account No.",
+        "SWIFT / Branch Code",
+        "Amount",
+        "Currency",
+        "Charges",
+        "Total Debited",
+        "Purpose of Payment",
+        "Status",
+        "Remarks",
+        "Attachment",
+      ];
 
       headerRow.eachCell(
         (cell) => {
-          cell.font =
-            {
-              name:
-                "Calibri",
+          cell.font = {
+            bold: true,
+            color: {
+              argb: "FFFFFFFF",
+            },
+          };
 
-              size: 10,
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: {
+              argb: "1F3B64",
+            },
+          };
 
-              bold:
-                true,
-
-              color: {
-                argb:
-                  "FFFFFFFF",
-              },
-            };
-
-          cell.fill =
-            {
-              type:
-                "pattern",
-
-              pattern:
-                "solid",
-
-              fgColor: {
-                argb:
-                  "1F3B64",
-              },
-            };
-
-          cell.alignment =
-            {
-              horizontal:
-                "center",
-
-              vertical:
-                "middle",
-
-              wrapText:
-                true,
-            };
-
-          cell.border =
-            {
-              top: {
-                style:
-                  "thin",
-              },
-
-              bottom: {
-                style:
-                  "thin",
-              },
-
-              left: {
-                style:
-                  "thin",
-              },
-
-              right: {
-                style:
-                  "thin",
-              },
-            };
+          cell.alignment = {
+            horizontal: "center",
+            vertical: "middle",
+            wrapText: true,
+          };
         }
       );
 
-      // RECORDS
-
       records.forEach(
         (record) => {
-          const dateParts =
-            record.transfer_date
-              ?.split(
-                "-"
-              ) || [];
+          const parts =
+            record.transfer_date?.split(
+              "-"
+            ) || [];
 
           let excelDate:
             | Date
-            | null =
-            null;
+            | null = null;
 
           if (
-            dateParts.length ===
-            3
+            parts.length === 3
           ) {
             excelDate =
               new Date(
-                Number(
-                  dateParts[0]
-                ),
-
-                Number(
-                  dateParts[1]
-                ) - 1,
-
-                Number(
-                  dateParts[2]
-                )
+                Number(parts[0]),
+                Number(parts[1]) -
+                  1,
+                Number(parts[2])
               );
           }
 
           const row =
-            worksheet.addRow(
-              [
-                excelDate,
-
-                record.tt_ref_no ||
-                  "",
-
-                record.applicant_sender ||
-                  "",
-
-                record.beneficiary_name ||
-                  "",
-
-                record.beneficiary_bank ||
-                  "",
-
-                record.beneficiary_account_no ||
-                  "",
-
-                record.swift_branch_code ||
-                  "",
-
-                Number(
-                  record.amount ||
-                    0
-                ),
-
-                record.currency ||
-                  "PHP",
-
-                Number(
-                  record.charges ||
-                    0
-                ),
-
-                Number(
-                  record.total_debited ||
-                    0
-                ),
-
-                record.purpose_of_payment ||
-                  "",
-
-                record.status ||
-                  "Pending",
-
-                record.remarks ||
-                  "",
-
-                record.attachment_url ||
-                  "",
-              ]
-            );
-
-          row.height =
-            24;
-
-          row.eachCell(
-            (
-              cell,
-              index
-            ) => {
-              cell.font =
-                {
-                  name:
-                    "Calibri",
-
-                  size: 10,
-                };
-
-              cell.alignment =
-                {
-                  vertical:
-                    "middle",
-
-                  horizontal:
-                    index ===
-                      8 ||
-                    index ===
-                      10 ||
-                    index ===
-                      11
-                      ? "right"
-                      : index ===
-                        1
-                      ? "center"
-                      : "left",
-
-                  wrapText:
-                    true,
-                };
-
-              cell.border =
-                {
-                  top: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-
-                  bottom: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-
-                  left: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-
-                  right: {
-                    style:
-                      "thin",
-
-                    color: {
-                      argb:
-                        "B7B7B7",
-                    },
-                  },
-                };
-            }
-          );
+            worksheet.addRow([
+              excelDate,
+              record.tt_ref_no || "",
+              record.applicant_sender || "",
+              record.beneficiary_name || "",
+              record.beneficiary_bank || "",
+              record.beneficiary_account_no ||
+                "",
+              record.swift_branch_code || "",
+              Number(
+                record.amount || 0
+              ),
+              record.currency || "PHP",
+              Number(
+                record.charges || 0
+              ),
+              Number(
+                record.total_debited ||
+                  0
+              ),
+              record.purpose_of_payment ||
+                "",
+              record.status ||
+                "Pending",
+              record.remarks || "",
+              record.attachment_url
+                ? "View Attachment"
+                : "",
+            ]);
 
           row.getCell(
             1
@@ -1698,170 +1261,76 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
           ).numFmt =
             "₱#,##0.00";
 
-          // Make Attachment clickable in Excel
           if (
             record.attachment_url
           ) {
             row.getCell(
               15
-            ).value =
-              {
-                text:
-                  "View Attachment",
+            ).value = {
+              text:
+                "View Attachment",
 
-                hyperlink:
-                  record.attachment_url,
-              };
+              hyperlink:
+                record.attachment_url,
+            };
           }
         }
       );
 
-      // OVERALL TOTAL
-
       const totalRow =
-        worksheet.addRow(
-          [
-            "OVERALL TOTAL",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            overallTotal,
-            "",
-            "",
-            "",
-            "",
-          ]
-        );
+        worksheet.addRow([
+          "OVERALL TOTAL",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          records.reduce(
+            (sum, record) =>
+              sum +
+              Number(
+                record.total_debited ||
+                  0
+              ),
+            0
+          ),
+          "",
+          "",
+          "",
+          "",
+        ]);
 
-      totalRow.height =
-        30;
-
-      totalRow.eachCell(
-        (cell) => {
-          cell.font =
-            {
-              name:
-                "Calibri",
-
-              size: 11,
-
-              bold:
-                true,
-
-              color: {
-                argb:
-                  "FFFFFFFF",
-              },
-            };
-
-          cell.fill =
-            {
-              type:
-                "pattern",
-
-              pattern:
-                "solid",
-
-              fgColor: {
-                argb:
-                  "1F3B64",
-              },
-            };
-
-          cell.alignment =
-            {
-              horizontal:
-                "center",
-
-              vertical:
-                "middle",
-            };
-
-          cell.border =
-            {
-              top: {
-                style:
-                  "thin",
-              },
-
-              bottom: {
-                style:
-                  "thin",
-              },
-
-              left: {
-                style:
-                  "thin",
-              },
-
-              right: {
-                style:
-                  "thin",
-              },
-            };
-        }
-      );
+      totalRow.font = {
+        bold: true,
+      };
 
       totalRow.getCell(
         11
       ).numFmt =
         "₱#,##0.00";
 
-      worksheet.autoFilter =
+      worksheet.autoFilter = {
+        from: "A4",
+        to: "O4",
+      };
+
+      worksheet.views = [
         {
-          from:
-            "A4",
-
-          to:
-            "O4",
-        };
-
-      worksheet.views =
-        [
-          {
-            state:
-              "frozen",
-
-            ySplit:
-              4,
-          },
-        ];
-
-      worksheet.pageSetup =
-        {
-          orientation:
-            "landscape",
-
-          paperSize:
-            9,
-
-          fitToPage:
-            true,
-
-          fitToWidth:
-            1,
-
-          fitToHeight:
-            0,
-        };
-
-      worksheet.pageSetup.printTitlesRow =
-        "1:4";
+          state: "frozen",
+          ySplit: 4,
+        },
+      ];
 
       const buffer =
         await workbook.xlsx.writeBuffer();
 
       const blob =
         new Blob(
-          [
-            buffer,
-          ],
+          [buffer],
           {
             type:
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1878,8 +1347,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
           "a"
         );
 
-      link.href =
-        url;
+      link.href = url;
 
       link.download =
         `${location.name.replace(
@@ -1905,17 +1373,13 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
         "Telegraphic Transfer Excel successfully exported!"
       );
     } catch (error) {
-      console.error(
-        error
-      );
+      console.error(error);
 
       alert(
         "Hindi ma-export ang Telegraphic Transfer Excel."
       );
     } finally {
-      setExporting(
-        false
-      );
+      setExporting(false);
     }
   }
 
@@ -1937,6 +1401,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
           <div className="mb-8">
 
             <button
+              type="button"
               onClick={() =>
                 router.push(
                   `/dashboard/locations/${locationId}`
@@ -1947,7 +1412,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
               ← Back to Location
             </button>
 
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
 
               <div>
 
@@ -1955,24 +1420,42 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                   Telegraphic Transfer
                 </h1>
 
-                <p className="text-gray-500 mt-2">
-                  {location?.name ||
-                    "Location"}{" "}
-                  - Manage TT application records
-                </p>
+                <div className="flex items-center gap-3 mt-2">
+
+                  <p className="text-gray-500">
+                    {location?.name ||
+                      "Location"}{" "}
+                    - Telegraphic Transfer Records
+                  </p>
+
+                  {!loadingRole && (
+                    <span
+                      className={`text-xs font-semibold px-3 py-1 rounded-full ${
+                        isAdmin
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-slate-200 text-slate-600"
+                      }`}
+                    >
+                      {isAdmin
+                        ? "👑 Admin"
+                        : "👤 Office Staff"}
+                    </span>
+                  )}
+
+                </div>
 
               </div>
 
               <div className="flex gap-3">
 
                 <button
+                  type="button"
                   onClick={
                     exportToExcel
                   }
                   disabled={
                     exporting ||
-                    records.length ===
-                      0
+                    records.length === 0
                   }
                   className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white px-5 py-3 rounded-lg font-medium"
                 >
@@ -1981,24 +1464,30 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                     : "📊 Export Excel"}
                 </button>
 
-                <button
-                  onClick={() => {
-                    if (
-                      showForm
-                    ) {
-                      clearForm();
-                    } else {
-                      setShowForm(
-                        true
-                      );
-                    }
-                  }}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-medium"
-                >
-                  {showForm
-                    ? "✕ Close Form"
-                    : "+ Add Transfer"}
-                </button>
+                {!loadingRole &&
+                  isAdmin && (
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (
+                        showForm
+                      ) {
+                        clearForm();
+                      } else {
+                        setShowForm(
+                          true
+                        );
+                      }
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-3 rounded-lg font-medium"
+                  >
+                    {showForm
+                      ? "✕ Close Form"
+                      : "+ Add Transfer"}
+                  </button>
+
+                )}
 
               </div>
 
@@ -2006,9 +1495,29 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
 
           </div>
 
+          {/* OFFICE STAFF */}
+
+          {!loadingRole &&
+            !isAdmin && (
+
+            <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4">
+
+              <p className="font-semibold text-blue-900">
+                👤 Office Staff Access
+              </p>
+
+              <p className="text-sm text-blue-700 mt-1">
+                You can view Telegraphic Transfer records, open proof attachments, search, and export to Excel. Adding, editing, and deleting are restricted to Admin users.
+              </p>
+
+            </div>
+
+          )}
+
           {/* FORM */}
 
-          {showForm && (
+          {showForm &&
+            isAdmin && (
 
             <div className="bg-white rounded-xl shadow p-6 mb-8">
 
@@ -2035,10 +1544,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
 
-                  {/* DATE */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Transfer Date *
                     </label>
@@ -2048,9 +1554,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.transfer_date
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "transfer_date",
                           e.target.value
@@ -2059,13 +1563,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       className="w-full border rounded-lg p-3"
                       required
                     />
-
                   </div>
 
-                  {/* TT REF */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       TT Ref. No.
                     </label>
@@ -2075,9 +1575,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.tt_ref_no
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "tt_ref_no",
                           e.target.value
@@ -2086,13 +1584,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       placeholder="TT-0001"
                       className="w-full border rounded-lg p-3"
                     />
-
                   </div>
 
-                  {/* STATUS */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Status
                     </label>
@@ -2101,9 +1595,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.status
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "status",
                           e.target.value
@@ -2111,7 +1603,6 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       }
                       className="w-full border rounded-lg p-3"
                     >
-
                       <option value="Pending">
                         Pending
                       </option>
@@ -2127,15 +1618,10 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       <option value="Cancelled">
                         Cancelled
                       </option>
-
                     </select>
-
                   </div>
 
-                  {/* SENDER */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Applicant / Sender *
                     </label>
@@ -2145,9 +1631,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.applicant_sender
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "applicant_sender",
                           e.target.value
@@ -2156,13 +1640,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       className="w-full border rounded-lg p-3"
                       required
                     />
-
                   </div>
 
-                  {/* BENEFICIARY */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Beneficiary Name *
                     </label>
@@ -2172,9 +1652,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.beneficiary_name
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "beneficiary_name",
                           e.target.value
@@ -2183,13 +1661,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       className="w-full border rounded-lg p-3"
                       required
                     />
-
                   </div>
 
-                  {/* BANK */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Beneficiary Bank
                     </label>
@@ -2199,9 +1673,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.beneficiary_bank
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "beneficiary_bank",
                           e.target.value
@@ -2209,13 +1681,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       }
                       className="w-full border rounded-lg p-3"
                     />
-
                   </div>
 
-                  {/* ACCOUNT */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Account No.
                     </label>
@@ -2225,9 +1693,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.beneficiary_account_no
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "beneficiary_account_no",
                           e.target.value
@@ -2235,13 +1701,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       }
                       className="w-full border rounded-lg p-3"
                     />
-
                   </div>
 
-                  {/* SWIFT */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       SWIFT / Branch Code
                     </label>
@@ -2251,9 +1713,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.swift_branch_code
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "swift_branch_code",
                           e.target.value
@@ -2261,13 +1721,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       }
                       className="w-full border rounded-lg p-3"
                     />
-
                   </div>
 
-                  {/* CURRENCY */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Currency
                     </label>
@@ -2276,9 +1732,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       value={
                         form.currency
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "currency",
                           e.target.value
@@ -2286,111 +1740,71 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       }
                       className="w-full border rounded-lg p-3"
                     >
-
-                      <option value="PHP">
-                        PHP
-                      </option>
-
-                      <option value="USD">
-                        USD
-                      </option>
-
-                      <option value="EUR">
-                        EUR
-                      </option>
-
-                      <option value="GBP">
-                        GBP
-                      </option>
-
-                      <option value="JPY">
-                        JPY
-                      </option>
-
-                      <option value="SGD">
-                        SGD
-                      </option>
-
+                      <option value="PHP">PHP</option>
+                      <option value="USD">USD</option>
+                      <option value="EUR">EUR</option>
+                      <option value="GBP">GBP</option>
+                      <option value="JPY">JPY</option>
+                      <option value="SGD">SGD</option>
                     </select>
-
                   </div>
 
-                  {/* AMOUNT */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Amount
                     </label>
 
                     <input
                       type="number"
-                      step="0.01"
                       min="0"
+                      step="0.01"
                       value={
                         form.amount
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "amount",
                           e.target.value
                         )
                       }
-                      placeholder="0.00"
                       className="w-full border rounded-lg p-3"
                     />
-
                   </div>
 
-                  {/* CHARGES */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Charges
                     </label>
 
                     <input
                       type="number"
-                      step="0.01"
                       min="0"
+                      step="0.01"
                       value={
                         form.charges
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "charges",
                           e.target.value
                         )
                       }
-                      placeholder="0.00"
                       className="w-full border rounded-lg p-3"
                     />
-
                   </div>
 
-                  {/* TOTAL */}
-
                   <div>
-
                     <label className="block text-sm font-medium mb-2">
                       Total Debited
                     </label>
 
-                    <div className="w-full border rounded-lg p-3 bg-slate-100 font-bold text-slate-900">
+                    <div className="w-full border rounded-lg p-3 bg-slate-100 font-bold">
                       {formatCurrency(
                         calculateTotal(),
                         form.currency
                       )}
                     </div>
-
                   </div>
-
-                  {/* ATTACHMENT */}
 
                   <div className="md:col-span-3">
 
@@ -2406,72 +1820,35 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                         onChange={
                           handleFileChange
                         }
-                        className="block w-full text-sm"
                       />
 
                       <p className="text-xs text-gray-500 mt-2">
-                        JPG, PNG, WEBP or other image format. Maximum 5MB.
+                        Maximum 5MB.
                       </p>
 
                       {attachmentFile && (
-
-                        <div className="mt-3 rounded-lg bg-blue-50 border border-blue-100 p-3">
-
-                          <p className="text-sm font-medium text-blue-800">
-                            New attachment selected:
-                          </p>
-
-                          <p className="text-sm text-blue-700 mt-1 break-all">
-                            {
-                              attachmentFile.name
-                            }
-                          </p>
-
-                        </div>
-
+                        <p className="mt-3 text-sm text-blue-700">
+                          Selected: {attachmentFile.name}
+                        </p>
                       )}
 
                       {form.attachment_url && (
-
-                        <div className="mt-4">
-
-                          <p className="text-sm text-gray-500 mb-2">
-                            Current attachment
-                          </p>
-
-                          <div className="flex flex-wrap gap-3">
-
-                            <button
-                              type="button"
-                              onClick={() =>
-                                viewAttachment(
-                                  form.attachment_url
-                                )
-                              }
-                              className="inline-flex items-center bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-sm"
-                            >
-                              👁 View Current Attachment
-                            </button>
-
-                            {attachmentFile && (
-
-                              <span className="text-xs text-orange-600 self-center">
-                                The new image will replace the attachment link in this record after saving. The old Storage file will remain.
-                              </span>
-
-                            )}
-
-                          </div>
-
-                        </div>
-
+                        <button
+                          type="button"
+                          onClick={() =>
+                            viewAttachment(
+                              form.attachment_url
+                            )
+                          }
+                          className="mt-3 bg-slate-900 text-white px-4 py-2 rounded-lg"
+                        >
+                          👁 View Current Attachment
+                        </button>
                       )}
 
                     </div>
 
                   </div>
-
-                  {/* PURPOSE */}
 
                   <div className="md:col-span-3">
 
@@ -2480,24 +1857,20 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                     </label>
 
                     <textarea
+                      rows={3}
                       value={
                         form.purpose_of_payment
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "purpose_of_payment",
                           e.target.value
                         )
                       }
-                      rows={3}
                       className="w-full border rounded-lg p-3"
                     />
 
                   </div>
-
-                  {/* REMARKS */}
 
                   <div className="md:col-span-3">
 
@@ -2506,26 +1879,22 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                     </label>
 
                     <textarea
+                      rows={3}
                       value={
                         form.remarks
                       }
-                      onChange={(
-                        e
-                      ) =>
+                      onChange={(e) =>
                         updateField(
                           "remarks",
                           e.target.value
                         )
                       }
-                      rows={3}
                       className="w-full border rounded-lg p-3"
                     />
 
                   </div>
 
                 </div>
-
-                {/* BUTTONS */}
 
                 <div className="flex gap-3 mt-6">
 
@@ -2535,14 +1904,13 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                       saving ||
                       uploading
                     }
-                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg font-medium"
+                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-6 py-3 rounded-lg"
                   >
                     {uploading
-                      ? "Uploading Attachment..."
+                      ? "Uploading..."
                       : saving
                       ? "Saving..."
-                      : editingId !==
-                        null
+                      : editingId !== null
                       ? "Save Changes"
                       : "Save Transfer"}
                   </button>
@@ -2552,11 +1920,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                     onClick={
                       clearForm
                     }
-                    disabled={
-                      saving ||
-                      uploading
-                    }
-                    className="border px-6 py-3 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                    className="border px-6 py-3 rounded-lg"
                   >
                     Cancel
                   </button>
@@ -2578,9 +1942,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
               value={
                 search
               }
-              onChange={(
-                e
-              ) =>
+              onChange={(e) =>
                 setSearch(
                   e.target.value
                 )
@@ -2598,23 +1960,19 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
             <div className="p-6 border-b flex items-center justify-between">
 
               <div>
-
-                <h2 className="text-xl font-bold text-slate-900">
+                <h2 className="text-xl font-bold">
                   Telegraphic Transfer Records
                 </h2>
 
-                <p className="text-sm text-gray-500 mt-1">
+                <p className="text-sm text-gray-500">
                   {filteredRecords.length} record
-                  {filteredRecords.length !==
-                  1
+                  {filteredRecords.length !== 1
                     ? "s"
                     : ""}
                 </p>
-
               </div>
 
               <div className="text-right">
-
                 <p className="text-sm text-gray-500">
                   Overall Total
                 </p>
@@ -2624,92 +1982,81 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                     overallTotal
                   )}
                 </p>
-
               </div>
 
             </div>
 
             {loading ? (
-
               <div className="p-10 text-center text-gray-500">
                 Loading records...
               </div>
-
-            ) : filteredRecords.length ===
-              0 ? (
-
+            ) : filteredRecords.length === 0 ? (
               <div className="p-10 text-center text-gray-500">
                 No Telegraphic Transfer records found.
               </div>
-
             ) : (
-
               <div className="overflow-x-auto">
 
                 <table className="w-full min-w-[1750px]">
 
                   <thead>
-
                     <tr className="bg-[#1F3B64] text-white">
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Date
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         TT Ref. No.
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Applicant / Sender
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Beneficiary
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Bank
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-left">
                         Account No.
                       </th>
 
-                      <th className="px-4 py-4 text-right text-sm">
+                      <th className="px-4 py-4 text-right">
                         Amount
                       </th>
 
-                      <th className="px-4 py-4 text-right text-sm">
+                      <th className="px-4 py-4 text-right">
                         Charges
                       </th>
 
-                      <th className="px-4 py-4 text-right text-sm">
+                      <th className="px-4 py-4 text-right">
                         Total Debited
                       </th>
 
-                      <th className="px-4 py-4 text-left text-sm">
+                      <th className="px-4 py-4 text-center">
                         Status
                       </th>
 
-                      <th className="px-4 py-4 text-center text-sm">
+                      <th className="px-4 py-4 text-center">
                         Attachment
                       </th>
 
-                      <th className="px-4 py-4 text-center text-sm">
+                      <th className="px-4 py-4 text-center">
                         Actions
                       </th>
 
                     </tr>
-
                   </thead>
 
                   <tbody>
 
                     {filteredRecords.map(
-                      (
-                        record
-                      ) => (
+                      (record) => (
 
                         <tr
                           key={
@@ -2749,29 +2096,27 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                               "—"}
                           </td>
 
-                          <td className="px-4 py-4 text-right whitespace-nowrap">
+                          <td className="px-4 py-4 text-right">
                             {formatCurrency(
                               Number(
-                                record.amount ||
-                                  0
+                                record.amount || 0
                               ),
                               record.currency ||
                                 "PHP"
                             )}
                           </td>
 
-                          <td className="px-4 py-4 text-right whitespace-nowrap">
+                          <td className="px-4 py-4 text-right">
                             {formatCurrency(
                               Number(
-                                record.charges ||
-                                  0
+                                record.charges || 0
                               ),
                               record.currency ||
                                 "PHP"
                             )}
                           </td>
 
-                          <td className="px-4 py-4 text-right font-semibold whitespace-nowrap">
+                          <td className="px-4 py-4 text-right font-semibold">
                             {formatCurrency(
                               Number(
                                 record.total_debited ||
@@ -2782,21 +2127,16 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                             )}
                           </td>
 
-                          <td className="px-4 py-4">
-
+                          <td className="px-4 py-4 text-center">
                             <span className="px-3 py-1 rounded-full bg-slate-100 text-sm">
                               {record.status ||
                                 "Pending"}
                             </span>
-
                           </td>
-
-                          {/* ATTACHMENT */}
 
                           <td className="px-4 py-4 text-center">
 
                             {record.attachment_url ? (
-
                               <button
                                 type="button"
                                 onClick={() =>
@@ -2804,52 +2144,57 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                                     record.attachment_url!
                                   )
                                 }
-                                className="inline-flex bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm whitespace-nowrap"
+                                className="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg"
                               >
                                 📎 View Proof
                               </button>
-
                             ) : (
-
                               <span className="text-gray-400">
                                 —
                               </span>
-
                             )}
 
                           </td>
 
-                          {/* ACTIONS */}
+                          <td className="px-4 py-4 text-center">
 
-                          <td className="px-4 py-4">
+                            {loadingRole ? (
+                              <span className="text-gray-400 text-xs">
+                                Checking...
+                              </span>
+                            ) : isAdmin ? (
+                              <div className="flex gap-2 justify-center">
 
-                            <div className="flex gap-2 justify-center">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    startEdit(
+                                      record
+                                    )
+                                  }
+                                  className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg"
+                                >
+                                  Edit
+                                </button>
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  startEdit(
-                                    record
-                                  )
-                                }
-                                className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-sm"
-                              >
-                                Edit
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    deleteRecord(
+                                      record
+                                    )
+                                  }
+                                  className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg"
+                                >
+                                  Delete
+                                </button>
 
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  deleteRecord(
-                                    record
-                                  )
-                                }
-                                className="bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg text-sm"
-                              >
-                                Delete
-                              </button>
-
-                            </div>
+                              </div>
+                            ) : (
+                              <span className="inline-flex px-3 py-1.5 rounded-lg bg-slate-100 text-slate-500 text-xs font-medium">
+                                👁 View Only
+                              </span>
+                            )}
 
                           </td>
 
@@ -2860,39 +2205,9 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
 
                   </tbody>
 
-                  <tfoot>
-
-                    <tr className="bg-[#1F3B64] text-white font-bold">
-
-                      <td
-                        colSpan={
-                          8
-                        }
-                        className="px-4 py-4 text-right"
-                      >
-                        OVERALL TOTAL
-                      </td>
-
-                      <td className="px-4 py-4 text-right whitespace-nowrap">
-                        {formatCurrency(
-                          overallTotal
-                        )}
-                      </td>
-
-                      <td
-                        colSpan={
-                          3
-                        }
-                      />
-
-                    </tr>
-
-                  </tfoot>
-
                 </table>
 
               </div>
-
             )}
 
           </div>
@@ -2902,5 +2217,5 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
       </div>
 
     </main>
-      );
+  );
 }
