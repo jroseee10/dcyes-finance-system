@@ -516,6 +516,35 @@ export default function LiquidationPage() {
       0
     );
 
+  // =====================================================
+  // SAFE EXCEL DATE - NO TIMEZONE SHIFT
+  // =====================================================
+
+  function excelDateSerial(dateString: string) {
+    if (!dateString) {
+      return null;
+    }
+
+    const [year, month, day] =
+      dateString.split("-").map(Number);
+
+    if (!year || !month || !day) {
+      return null;
+    }
+
+    const milliseconds = Date.UTC(
+      year,
+      month - 1,
+      day
+    );
+
+    return (
+      milliseconds /
+        (24 * 60 * 60 * 1000) +
+      25569
+    );
+  }
+
   async function exportToExcel() {
     if (liquidations.length === 0) {
       alert(
@@ -713,9 +742,8 @@ export default function LiquidationPage() {
         (item, index) => {
           const row =
             worksheet.addRow([
-              new Date(
-                item.liquidation_date +
-                  "T00:00:00"
+              excelDateSerial(
+                item.liquidation_date
               ),
               item.payee || "",
               item.address || "",

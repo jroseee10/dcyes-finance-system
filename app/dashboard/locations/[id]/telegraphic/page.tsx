@@ -990,6 +990,37 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
   }
 
   // =====================================================
+  // SAFE EXCEL DATE - NO TIMEZONE SHIFT
+  // =====================================================
+
+  function excelDateSerial(
+    dateString: string
+  ) {
+    if (!dateString) {
+      return null;
+    }
+
+    const [year, month, day] =
+      dateString.split("-").map(Number);
+
+    if (!year || !month || !day) {
+      return null;
+    }
+
+    const milliseconds = Date.UTC(
+      year,
+      month - 1,
+      day
+    );
+
+    return (
+      milliseconds /
+        (24 * 60 * 60 * 1000) +
+      25569
+    );
+  }
+
+  // =====================================================
   // EXCEL
   // =====================================================
 
@@ -1019,100 +1050,48 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
       workbook.creator =
         "DCYES Finance System";
 
+      workbook.created =
+        new Date();
+
       const worksheet =
         workbook.addWorksheet(
           "Telegraphic Transfer"
         );
 
+      // Match the cleaner Deposit Slips report style
       worksheet.columns = [
-        {
-          header: "Date",
-          key: "date",
-          width: 20,
-        },
-        {
-          header: "TT Ref. No.",
-          key: "ref",
-          width: 18,
-        },
-        {
-          header: "Applicant / Sender",
-          key: "sender",
-          width: 25,
-        },
-        {
-          header: "Beneficiary Name",
-          key: "beneficiary",
-          width: 25,
-        },
-        {
-          header: "Beneficiary Bank",
-          key: "bank",
-          width: 25,
-        },
-        {
-          header: "Account No.",
-          key: "account",
-          width: 22,
-        },
-        {
-          header: "SWIFT / Branch Code",
-          key: "swift",
-          width: 22,
-        },
-        {
-          header: "Amount",
-          key: "amount",
-          width: 18,
-        },
-        {
-          header: "Currency",
-          key: "currency",
-          width: 12,
-        },
-        {
-          header: "Charges",
-          key: "charges",
-          width: 18,
-        },
-        {
-          header: "Total Debited",
-          key: "total",
-          width: 20,
-        },
-        {
-          header: "Purpose of Payment",
-          key: "purpose",
-          width: 28,
-        },
-        {
-          header: "Status",
-          key: "status",
-          width: 15,
-        },
-        {
-          header: "Remarks",
-          key: "remarks",
-          width: 28,
-        },
-        {
-          header: "Attachment",
-          key: "attachment",
-          width: 25,
-        },
+        { header: "Date", key: "date", width: 20 },
+        { header: "TT Ref. No.", key: "ref", width: 18 },
+        { header: "Applicant / Sender", key: "sender", width: 24 },
+        { header: "Beneficiary Name", key: "beneficiary", width: 26 },
+        { header: "Beneficiary Bank", key: "bank", width: 28 },
+        { header: "Account No.", key: "account", width: 24 },
+        { header: "SWIFT / Branch Code", key: "swift", width: 22 },
+        { header: "Amount", key: "amount", width: 18 },
+        { header: "Currency", key: "currency", width: 12 },
+        { header: "Charges", key: "charges", width: 16 },
+        { header: "Total Debited", key: "total", width: 20 },
+        { header: "Purpose of Payment", key: "purpose", width: 28 },
+        { header: "Status", key: "status", width: 16 },
+        { header: "Remarks", key: "remarks", width: 24 },
+        { header: "Attachment", key: "attachment", width: 20 },
       ];
 
+      // TITLE
       worksheet.mergeCells(
         "A1:O1"
       );
 
       const titleCell =
-        worksheet.getCell("A1");
+        worksheet.getCell(
+          "A1"
+        );
 
       titleCell.value =
         `${location.name.toUpperCase()} - TELEGRAPHIC TRANSFER`;
 
       titleCell.font = {
+        name: "Calibri",
         size: 16,
         bold: true,
         color: {
@@ -1133,16 +1112,37 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
         vertical: "middle",
       };
 
+      worksheet.getRow(1).height = 30;
+
+      // SUBTITLE
       worksheet.mergeCells(
         "A2:O2"
       );
 
-      worksheet.getCell(
-        "A2"
-      ).value = "DCYES";
+      const subtitle =
+        worksheet.getCell(
+          "A2"
+        );
 
+      subtitle.value =
+        "DCYES FINANCE SYSTEM";
+
+      subtitle.font = {
+        italic: true,
+        color: {
+          argb: "1F3B64",
+        },
+      };
+
+      subtitle.alignment = {
+        horizontal: "center",
+      };
+
+      // HEADER
       const headerRow =
-        worksheet.getRow(4);
+        worksheet.getRow(
+          4
+        );
 
       headerRow.values = [
         "Date",
@@ -1161,6 +1161,8 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
         "Remarks",
         "Attachment",
       ];
+
+      headerRow.height = 28;
 
       headerRow.eachCell(
         (cell) => {
@@ -1184,31 +1186,23 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
             vertical: "middle",
             wrapText: true,
           };
+
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
         }
       );
 
+      // RECORDS
       records.forEach(
         (record) => {
-          const parts =
-            record.transfer_date?.split(
-              "-"
-            ) || [];
-
-          let excelDate:
-            | Date
-            | null = null;
-
-          if (
-            parts.length === 3
-          ) {
-            excelDate =
-              new Date(
-                Number(parts[0]),
-                Number(parts[1]) -
-                  1,
-                Number(parts[2])
-              );
-          }
+          const excelDate =
+            excelDateSerial(
+              record.transfer_date
+            );
 
           const row =
             worksheet.addRow([
@@ -1217,8 +1211,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
               record.applicant_sender || "",
               record.beneficiary_name || "",
               record.beneficiary_bank || "",
-              record.beneficiary_account_no ||
-                "",
+              record.beneficiary_account_no || "",
               record.swift_branch_code || "",
               Number(
                 record.amount || 0
@@ -1228,55 +1221,86 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
                 record.charges || 0
               ),
               Number(
-                record.total_debited ||
-                  0
+                record.total_debited || 0
               ),
-              record.purpose_of_payment ||
-                "",
-              record.status ||
-                "Pending",
+              record.purpose_of_payment || "",
+              record.status || "Pending",
               record.remarks || "",
               record.attachment_url
                 ? "View Attachment"
                 : "",
             ]);
 
-          row.getCell(
-            1
-          ).numFmt =
+          row.height = 24;
+
+          row.getCell(1).numFmt =
             "mmmm d, yyyy";
 
-          row.getCell(
-            8
-          ).numFmt =
+          row.getCell(8).numFmt =
             "₱#,##0.00";
 
-          row.getCell(
-            10
-          ).numFmt =
+          row.getCell(10).numFmt =
             "₱#,##0.00";
 
-          row.getCell(
-            11
-          ).numFmt =
+          row.getCell(11).numFmt =
             "₱#,##0.00";
 
-          if (
-            record.attachment_url
-          ) {
-            row.getCell(
-              15
-            ).value = {
-              text:
-                "View Attachment",
-
-              hyperlink:
-                record.attachment_url,
+          if (record.attachment_url) {
+            row.getCell(15).value = {
+              text: "View Attachment",
+              hyperlink: record.attachment_url,
             };
           }
+
+          row.eachCell(
+            (cell) => {
+              cell.border = {
+                top: { style: "thin" },
+                bottom: { style: "thin" },
+                left: { style: "thin" },
+                right: { style: "thin" },
+              };
+
+              cell.alignment = {
+                vertical: "middle",
+                wrapText: false,
+              };
+            }
+          );
+
+          row.getCell(1).alignment = {
+            horizontal: "center",
+            vertical: "middle",
+          };
+
+          row.getCell(8).alignment = {
+            horizontal: "right",
+            vertical: "middle",
+          };
+
+          row.getCell(9).alignment = {
+            horizontal: "center",
+            vertical: "middle",
+          };
+
+          row.getCell(10).alignment = {
+            horizontal: "right",
+            vertical: "middle",
+          };
+
+          row.getCell(11).alignment = {
+            horizontal: "right",
+            vertical: "middle",
+          };
+
+          row.getCell(13).alignment = {
+            horizontal: "center",
+            vertical: "middle",
+          };
         }
       );
 
+      // TOTAL
       const totalRow =
         worksheet.addRow([
           "OVERALL TOTAL",
@@ -1293,8 +1317,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
             (sum, record) =>
               sum +
               Number(
-                record.total_debited ||
-                  0
+                record.total_debited || 0
               ),
             0
           ),
@@ -1304,14 +1327,46 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
           "",
         ]);
 
+      totalRow.height = 24;
+
       totalRow.font = {
         bold: true,
+        color: {
+          argb: "FFFFFFFF",
+        },
       };
 
-      totalRow.getCell(
-        11
-      ).numFmt =
+      totalRow.eachCell(
+        (cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: {
+              argb: "1F3B64",
+            },
+          };
+
+          cell.border = {
+            top: { style: "thin" },
+            bottom: { style: "thin" },
+            left: { style: "thin" },
+            right: { style: "thin" },
+          };
+        }
+      );
+
+      totalRow.getCell(11).numFmt =
         "₱#,##0.00";
+
+      totalRow.getCell(1).alignment = {
+        horizontal: "left",
+        vertical: "middle",
+      };
+
+      totalRow.getCell(11).alignment = {
+        horizontal: "right",
+        vertical: "middle",
+      };
 
       worksheet.autoFilter = {
         from: "A4",
@@ -1325,6 +1380,14 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
         },
       ];
 
+      worksheet.pageSetup = {
+        orientation: "landscape",
+        paperSize: 9,
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+      };
+
       const buffer =
         await workbook.xlsx.writeBuffer();
 
@@ -1332,8 +1395,7 @@ Note: Hindi mabubura ang uploaded attachment sa Storage.`
         new Blob(
           [buffer],
           {
-            type:
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           }
         );
 

@@ -1286,6 +1286,35 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
   }
 
   // =====================================================
+  // SAFE EXCEL DATE - NO TIMEZONE SHIFT
+  // =====================================================
+
+  function excelDateSerial(dateString: string) {
+    if (!dateString) {
+      return null;
+    }
+
+    const [year, month, day] =
+      dateString.split("-").map(Number);
+
+    if (!year || !month || !day) {
+      return null;
+    }
+
+    const milliseconds = Date.UTC(
+      year,
+      month - 1,
+      day
+    );
+
+    return (
+      milliseconds /
+        (24 * 60 * 60 * 1000) +
+      25569
+    );
+  }
+
+  // =====================================================
   // EXPORT EXCEL
   // =====================================================
 
@@ -1627,36 +1656,10 @@ Note: Hindi mabubura ang uploaded proof photo sa Storage.`
         (
           record
         ) => {
-          const parts =
-            record.deposit_date
-              ?.split(
-                "-"
-              ) || [];
-
-          let excelDate:
-            | Date
-            | null =
-            null;
-
-          if (
-            parts.length ===
-            3
-          ) {
-            excelDate =
-              new Date(
-                Number(
-                  parts[0]
-                ),
-
-                Number(
-                  parts[1]
-                ) - 1,
-
-                Number(
-                  parts[2]
-                )
-              );
-          }
+          const excelDate =
+            excelDateSerial(
+              record.deposit_date
+            );
 
           const row =
             worksheet.addRow(
