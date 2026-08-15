@@ -1882,46 +1882,77 @@ export default function LocationExpensesPage() {
         "middle",
     };
 
-    const startRow =
-      5;
+    // =====================================================
+    // ACTUAL OVERALL TOTALS - NO EXCEL RECALCULATION NEEDED
+    // =====================================================
 
-    const endRow =
-      totalRowNumber -
-      2;
-
-    const formulas = {
-      8:
-        `SUM(H${startRow}:H${endRow})`,
-
-      9:
-        `SUM(I${startRow}:I${endRow})`,
-
-      10:
-        `SUM(J${startRow}:J${endRow})`,
-
-      11:
-        `SUM(K${startRow}:K${endRow})`,
-    };
-
-    Object.entries(
-      formulas
-    ).forEach(
-      (
-        [
-          column,
-          formula,
-        ]
-      ) => {
-        sheet.getCell(
-          totalRowNumber,
+    const overallAmount =
+      filteredExpenses.reduce(
+        (sum, expense) =>
+          sum +
           Number(
-            column
-          )
-        ).value = {
-          formula,
-        };
-      }
-    );
+            expense.amount ||
+              0
+          ),
+        0
+      );
+
+    const overallReimburse =
+      filteredExpenses.reduce(
+        (sum, expense) =>
+          sum +
+          Number(
+            expense.reimburse ||
+              0
+          ),
+        0
+      );
+
+    const overallRefund =
+      filteredExpenses.reduce(
+        (sum, expense) =>
+          sum +
+          Number(
+            expense.refund ||
+              0
+          ),
+        0
+      );
+
+    const overallBalance =
+      filteredExpenses.reduce(
+        (sum, expense) =>
+          sum +
+          Number(
+            expense.balance ||
+              0
+          ),
+        0
+      );
+
+    // H = Amount
+    sheet.getCell(
+      totalRowNumber,
+      8
+    ).value = overallAmount;
+
+    // I = Reimburse
+    sheet.getCell(
+      totalRowNumber,
+      9
+    ).value = overallReimburse;
+
+    // J = Refund
+    sheet.getCell(
+      totalRowNumber,
+      10
+    ).value = overallRefund;
+
+    // K = Balance
+    sheet.getCell(
+      totalRowNumber,
+      11
+    ).value = overallBalance;
 
     [
       8,
