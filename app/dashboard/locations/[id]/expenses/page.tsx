@@ -1886,13 +1886,39 @@ export default function LocationExpensesPage() {
     // ACTUAL OVERALL TOTALS - NO EXCEL RECALCULATION NEEDED
     // =====================================================
 
+    // IMPORTANT: Some older/imported location records may have
+    // expenses.amount / expenses.balance saved as 0 even though
+    // their expense_items contain the correct Qty x Price values.
+    // Compute totals from the item rows first so every location
+    // exports correctly, including newly added locations.
+
+    function getExportExpenseAmount(
+      expense: Expense
+    ) {
+      const expenseItems =
+        expense.expense_items || [];
+
+      if (expenseItems.length > 0) {
+        return expenseItems.reduce(
+          (sum, item) =>
+            sum +
+            Number(item.qty || 0) *
+              Number(item.price || 0),
+          0
+        );
+      }
+
+      return Number(
+        expense.amount || 0
+      );
+    }
+
     const overallAmount =
       filteredExpenses.reduce(
         (sum, expense) =>
           sum +
-          Number(
-            expense.amount ||
-              0
+          getExportExpenseAmount(
+            expense
           ),
         0
       );
@@ -1921,12 +1947,25 @@ export default function LocationExpensesPage() {
 
     const overallBalance =
       filteredExpenses.reduce(
-        (sum, expense) =>
-          sum +
-          Number(
-            expense.balance ||
-              0
-          ),
+        (sum, expense) => {
+          const amount =
+            getExportExpenseAmount(
+              expense
+            );
+
+          return (
+            sum +
+            amount -
+            Number(
+              expense.reimburse ||
+                0
+            ) -
+            Number(
+              expense.refund ||
+                0
+            )
+          );
+        },
         0
       );
 
