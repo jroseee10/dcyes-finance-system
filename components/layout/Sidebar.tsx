@@ -121,6 +121,7 @@ export default function Sidebar() {
       setProfile(
         profileData as CurrentProfile
       );
+
     } catch (error) {
       console.error(
         "Load profile error:",
@@ -128,6 +129,7 @@ export default function Sidebar() {
       );
 
       setProfile(null);
+
     } finally {
       setLoadingProfile(false);
     }
@@ -192,10 +194,65 @@ export default function Sidebar() {
     setLoggingOut(true);
 
     try {
+
+      // =================================================
+      // ACTIVITY LOG - LOGOUT
+      // =================================================
+
+      try {
+
+        if (profile?.email) {
+
+          const { error: activityError } =
+            await supabase
+              .from("activity_logs")
+              .insert({
+                user_email: profile.email,
+
+                user_name: profile.name,
+
+                user_position:
+                  profile.position,
+
+                action: "Logout",
+
+                module: "Authentication",
+
+                record_id: null,
+
+                location_id: null,
+
+                location_name: null,
+
+                description: "User logged out",
+              });
+
+          if (activityError) {
+            console.error(
+              "Logout activity log error:",
+              activityError
+            );
+          }
+        }
+
+      } catch (activityError) {
+
+        console.error(
+          "Logout activity log unexpected error:",
+          activityError
+        );
+
+      }
+
+      // =================================================
+      // SUPABASE LOGOUT
+      // =================================================
+
       const { error } =
         await supabase.auth.signOut();
 
       if (error) {
+
         console.error(
           "Logout error:",
           error
@@ -211,7 +268,9 @@ export default function Sidebar() {
 
       router.replace("/login");
       router.refresh();
+
     } catch (error) {
+
       console.error(
         "Logout error:",
         error
@@ -452,6 +511,7 @@ export default function Sidebar() {
             disabled:cursor-not-allowed
           "
         >
+
           <span className="text-xl">
             🚪
           </span>
@@ -461,6 +521,7 @@ export default function Sidebar() {
               ? "Logging out..."
               : "Logout"}
           </span>
+
         </button>
 
       </div>

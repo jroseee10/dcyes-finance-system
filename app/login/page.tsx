@@ -25,7 +25,7 @@ export default function LoginPage() {
     setError("");
 
     try {
-      const { error: loginError } =
+      const { data: authData, error: loginError } =
         await supabase.auth.signInWithPassword({
           email: email.trim(),
           password,
@@ -36,8 +36,62 @@ export default function LoginPage() {
         return;
       }
 
+      // =================================================
+      // ACTIVITY LOG - LOGIN
+      // =================================================
+
+      try {
+        const authUser = authData.user;
+
+        if (authUser?.email) {
+          const { data: profile } = await supabase
+            .from("users")
+            .select("name, email, position")
+            .eq("email", authUser.email)
+            .maybeSingle();
+
+          const { error: activityError } = await supabase
+            .from("activity_logs")
+            .insert({
+              user_email:
+                profile?.email || authUser.email,
+
+              user_name:
+                profile?.name || authUser.email,
+
+              user_position:
+                profile?.position || "User",
+
+              action: "Login",
+
+              module: "Authentication",
+
+              record_id: null,
+
+              location_id: null,
+
+              location_name: null,
+
+              description: "User logged in",
+            });
+
+          if (activityError) {
+            console.error(
+              "Login activity log error:",
+              activityError
+            );
+          }
+        }
+      } catch (activityError) {
+        console.error(
+          "Login activity log unexpected error:",
+          activityError
+        );
+      }
+
       router.replace("/dashboard");
       router.refresh();
+
     } catch (err) {
       console.error("Login error:", err);
 
@@ -145,27 +199,21 @@ export default function LoginPage() {
       ===================================================== */}
 
       <div className="pointer-events-none absolute bottom-[-45px] left-[-20px] z-[2]">
-
         <div className="text-[190px] opacity-[0.22]">
           🌾
         </div>
-
       </div>
 
       <div className="pointer-events-none absolute bottom-[-55px] left-[130px] z-[2]">
-
         <div className="text-[150px] opacity-[0.13]">
           🌾
         </div>
-
       </div>
 
       <div className="pointer-events-none absolute bottom-[-60px] left-[260px] z-[2]">
-
         <div className="text-[120px] opacity-[0.10]">
           🌾
         </div>
-
       </div>
 
       {/* =====================================================
@@ -393,9 +441,7 @@ export default function LoginPage() {
             "
           >
 
-            {/* =================================================
-                SECURE ACCESS
-            ================================================= */}
+            {/* SECURE ACCESS */}
 
             <div className="flex items-center gap-4">
 
@@ -469,9 +515,7 @@ export default function LoginPage() {
 
             </div>
 
-            {/* =================================================
-                ERROR
-            ================================================= */}
+            {/* ERROR */}
 
             {error && (
               <div
@@ -493,9 +537,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* =================================================
-                LOGIN FORM
-            ================================================= */}
+            {/* LOGIN FORM */}
 
             <form
               onSubmit={handleLogin}
@@ -694,9 +736,7 @@ export default function LoginPage() {
 
               </div>
 
-              {/* =================================================
-                  REMEMBER ME ONLY
-              ================================================= */}
+              {/* REMEMBER ME */}
 
               <div className="flex items-center">
 
@@ -735,9 +775,7 @@ export default function LoginPage() {
 
               </div>
 
-              {/* =================================================
-                  SIGN IN BUTTON
-              ================================================= */}
+              {/* SIGN IN BUTTON */}
 
               <button
                 type="submit"
@@ -821,9 +859,7 @@ export default function LoginPage() {
 
             </form>
 
-            {/* =================================================
-                AUTHORIZED PERSONNEL
-            ================================================= */}
+            {/* AUTHORIZED PERSONNEL */}
 
             <div
               className="
@@ -863,9 +899,7 @@ export default function LoginPage() {
 
       </div>
 
-      {/* =====================================================
-          BOTTOM COPYRIGHT
-      ===================================================== */}
+      {/* BOTTOM COPYRIGHT */}
 
       <div
         className="
