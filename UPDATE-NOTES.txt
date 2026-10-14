@@ -1,0 +1,10 @@
+DCYES improvement preview
+
+Updated:
+- app/dashboard/receipt-gallery/page.tsx
+  Adds search, project/location filter, date range filters, and groups receipt cards by project/location.
+- app/dashboard/daily-records/page.tsx
+  Excel report dates display as OCT-13-2026, numeric transaction numbers are padded to 4 digits, and both report worksheets include an overall total row.
+
+IMPORTANT:
+This is NOT a production-ready complete release yet. The current code shows Daily Records saved in `daily_records`, while Location Expenses reads from `expenses`. These are separate data sources. The intended address-to-Location-Expenses behavior must be implemented only after verifying the database schema and avoiding duplicate expense totals. Do not deploy this preview as the final fix.

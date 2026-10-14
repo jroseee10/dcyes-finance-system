@@ -1,0 +1,11 @@
+DCYES Finance System - review patch
+
+Changes:
+- Location Expenses now looks up daily_records.address only through an explicit daily_records.expense_id -> expenses.id link.
+- If no linked Daily Record address exists, it falls back to expenses.address, then locations.address.
+- No Daily Record is added to the expense list and no amount or total is changed by this enrichment.
+
+Important:
+- This is a code patch, not yet certified production-ready.
+- The source archive did not contain node_modules. A build could not be completed in this environment because dependency installation did not finish; run npm ci and npm run build locally before deployment.
+- Existing data is not migrated or modified by this patch.
