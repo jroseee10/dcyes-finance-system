@@ -1,9 +1,8 @@
-
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import * as XLSX from "xlsx";
+import ExcelJS from "exceljs";
 
 type Location = {
   id: number;
@@ -276,7 +275,13 @@ export default function DailyRecordsPage() {
         .order("id", { ascending: false });
 
       if (error) {
-        console.error("Daily Records load error:", error);
+        console.error("Daily Records load error:", {
+          message: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+        });
+
         setRecords([]);
         return;
       }
@@ -497,7 +502,9 @@ export default function DailyRecordsPage() {
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          ...(editingRecordId ? { id: editingRecordId } : { submission_key: submissionKey }),
+          ...(editingRecordId
+            ? { id: editingRecordId }
+            : { submission_key: submissionKey }),
           record_date: date,
           payee: payee.trim(),
           employee_name: employeeName.trim(),
@@ -608,7 +615,6 @@ export default function DailyRecordsPage() {
     }
   }
 
-
   function beginEdit(record: DailyRecord) {
     if (!isAdmin) {
       setSaveMessage("An active Admin account is required to edit records.");
@@ -625,9 +631,11 @@ export default function DailyRecordsPage() {
     setAddress(record.address || "");
     setDestination(record.destination || "expenses");
     setRemarks(record.remarks || "");
+
     const ordered = [...(record.daily_record_items || [])].sort(
       (a, b) => Number(a.item_order) - Number(b.item_order)
     );
+
     setItems(
       ordered.length
         ? ordered.map((item) => ({
@@ -638,9 +646,12 @@ export default function DailyRecordsPage() {
           }))
         : [createItem()]
     );
+
     setPendingFiles([]);
     setSubmissionKey(createSubmissionKey());
-    setSaveMessage(`Editing ${record.transaction_no}. Save changes using Update Daily Record.`);
+    setSaveMessage(
+      `Editing ${record.transaction_no}. Save changes using Update Daily Record.`
+    );
     setSaveMessageType("info");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -655,8 +666,13 @@ export default function DailyRecordsPage() {
 
     setDeletingRecordId(record.id);
     setSaveMessage("");
+
     try {
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
       if (sessionError || !session?.access_token) {
         throw new Error("Your login session is unavailable. Please log in again.");
       }
@@ -669,7 +685,12 @@ export default function DailyRecordsPage() {
         },
         body: JSON.stringify({ id: record.id }),
       });
-      const result = (await response.json()) as { success?: boolean; error?: string };
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+      };
+
       if (!response.ok || !result.success) {
         throw new Error(result.error || "Unable to delete this Daily Record.");
       }
@@ -677,9 +698,14 @@ export default function DailyRecordsPage() {
       await loadRecords();
       setSaveMessage(`Daily Record ${record.transaction_no} was deleted.`);
       setSaveMessageType("success");
+
       if (editingRecordId === record.id) clearForm();
     } catch (error) {
-      setSaveMessage(error instanceof Error ? error.message : "Unable to delete this Daily Record.");
+      setSaveMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to delete this Daily Record."
+      );
       setSaveMessageType("error");
     } finally {
       setDeletingRecordId(null);
@@ -689,142 +715,584 @@ export default function DailyRecordsPage() {
   function formatExcelDate(value: string) {
     const date = new Date(`${value.slice(0, 10)}T00:00:00`);
     if (Number.isNaN(date.getTime())) return value;
-    const month = date.toLocaleString("en-US", { month: "short" }).toUpperCase();
+
+    const month = date
+      .toLocaleString("en-US", { month: "short" })
+      .toUpperCase();
+
     return `${month}-${String(date.getDate()).padStart(2, "0")}-${date.getFullYear()}`;
   }
 
   function formatTransactionNo(value: string) {
     const text = String(value || "");
-    return /^\\d+$/.test(text) ? text.padStart(4, "0") : text;
+    return /^\d+$/.test(text) ? text.padStart(4, "0") : text;
   }
 
-  function exportReport(
+  async function exportReport(
     sourceRecords: DailyRecord[],
     period: "daily" | "weekly" | "monthly",
-    referenceDate: string
+    referenceDate: string,
+    allRecords = false
   ) {
-    if (!referenceDate) {
+    if (!allRecords && !referenceDate) {
       setSaveMessage("Choose a date for the report.");
       setSaveMessageType("error");
       return;
     }
 
-    const selected = new Date(`${referenceDate.slice(0, 10)}T00:00:00`);
-    let start = new Date(selected);
-    let end = new Date(selected);
+    try {
+      const normalizeRecordDate = (value: unknown): string => {
+        const text = String(value ?? "").trim();
+        const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+        return match ? match[1] : "";
+      };
 
-    if (period === "weekly") {
-      const day = (selected.getDay() + 6) % 7;
-      start.setDate(selected.getDate() - day);
-      end = new Date(start);
-      end.setDate(start.getDate() + 6);
-    } else if (period === "monthly") {
-      start = new Date(selected.getFullYear(), selected.getMonth(), 1);
-      end = new Date(selected.getFullYear(), selected.getMonth() + 1, 0);
-    }
+      let startText = "";
+      let endText = "";
 
-    const startText = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
-    const endText = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
-    const filtered = sourceRecords
-      .filter((record) => record.record_date >= startText && record.record_date <= endText)
-      .sort((a, b) => a.record_date.localeCompare(b.record_date) || a.transaction_no.localeCompare(b.transaction_no));
+      if (allRecords) {
+        // All-record export uses the dates of the entire database result,
+        // not the selected daily, weekly, or monthly reporting period.
+        const allDates = sourceRecords
+          .map((record) => normalizeRecordDate(record.record_date))
+          .filter(Boolean)
+          .sort();
 
-    const summaryRows = filtered.map((record) => ({
-      "Transaction No.": formatTransactionNo(record.transaction_no),
-      Date: formatExcelDate(record.record_date),
-      Payee: record.payee,
-      "Employee Name": record.employee_name || "",
-      "Receipt No.": record.receipt_no || "",
-      "Project Location": record.locations?.name || "",
-      "Project Address": record.address || "",
-      Destination: destinationLabel(record.destination),
-      Remarks: record.remarks || "",
-      "Total Amount": getRecordTotal(record),
-      "Item Count": (record.daily_record_items || []).length,
-    }));
+        startText = allDates[0] || "All-Dates";
+        endText = allDates[allDates.length - 1] || "All-Dates";
+      } else {
+        const selected = new Date(`${referenceDate.slice(0, 10)}T00:00:00`);
 
-    const detailRows = filtered.flatMap((record) => {
-      const recordItems = [...(record.daily_record_items || [])].sort(
-        (a, b) => Number(a.item_order) - Number(b.item_order)
+        if (Number.isNaN(selected.getTime())) {
+          throw new Error("Invalid report date.");
+        }
+
+        let start = new Date(selected);
+        let end = new Date(selected);
+
+        if (period === "weekly") {
+          const day = (selected.getDay() + 6) % 7;
+          start.setDate(selected.getDate() - day);
+          end = new Date(start);
+          end.setDate(start.getDate() + 6);
+        } else if (period === "monthly") {
+          start = new Date(selected.getFullYear(), selected.getMonth(), 1);
+          end = new Date(selected.getFullYear(), selected.getMonth() + 1, 0);
+        }
+
+        const toDateText = (value: Date) =>
+          `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+
+        startText = toDateText(start);
+        endText = toDateText(end);
+      }
+
+      const filtered = sourceRecords
+        .filter((record) => {
+          // Important: do not apply the selected date filter when exporting
+          // all records. This includes historical records from every location.
+          if (allRecords) return true;
+
+          const normalizedDate = normalizeRecordDate(record.record_date);
+
+          return (
+            normalizedDate !== "" &&
+            normalizedDate >= startText &&
+            normalizedDate <= endText
+          );
+        })
+        .sort((a, b) => {
+          const dateA = normalizeRecordDate(a.record_date);
+          const dateB = normalizeRecordDate(b.record_date);
+
+          return (
+            dateA.localeCompare(dateB) ||
+            String(a.transaction_no ?? "").localeCompare(
+              String(b.transaction_no ?? ""),
+              undefined,
+              { numeric: true }
+            )
+          );
+        });
+
+      if (filtered.length === 0) {
+        if (allRecords) {
+          setSaveMessage("There are no Daily Records to export.");
+          setSaveMessageType("error");
+          return;
+        }
+
+        console.warn("Daily Records Excel export diagnostics:", {
+          period,
+          referenceDate,
+          startText,
+          endText,
+          loadedRecordCount: sourceRecords.length,
+          sampleDates: sourceRecords.slice(0, 10).map((record) => ({
+            transaction_no: record.transaction_no,
+            record_date: record.record_date,
+          })),
+        });
+
+        setSaveMessage(
+          `No records match ${startText} to ${endText}. ` +
+            `${sourceRecords.length} record(s) are loaded. ` +
+            `Check the selected report date or the browser console.`
+        );
+        setSaveMessageType("error");
+        return;
+      }
+
+      const summaryHeaders = [
+        "Transaction No.",
+        "Date",
+        "Payee",
+        "Employee Name",
+        "Receipt No.",
+        "Project Location",
+        "Project Address",
+        "Destination",
+        "Remarks",
+        "Total Amount",
+        "Item Count",
+      ];
+
+      const detailHeaders = [
+        "Transaction No.",
+        "Date",
+        "Payee",
+        "Employee Name",
+        "Receipt No.",
+        "Project Location",
+        "Project Address",
+        "Destination",
+        "Item Description",
+        "Amount",
+        "Remarks",
+      ];
+
+      const summaryRows: (string | number)[][] = filtered
+        .map((record) => ({
+          transactionNo: formatTransactionNo(record.transaction_no),
+          date: formatExcelDate(record.record_date),
+          payee: record.payee || "",
+          employeeName: record.employee_name || "",
+          receiptNo: record.receipt_no || "",
+          location: record.locations?.name || "",
+          address: record.address || "",
+          destination: destinationLabel(record.destination),
+          remarks: record.remarks || "",
+          total: getRecordTotal(record),
+          itemCount: (record.daily_record_items || []).length,
+        }))
+        .map((record) => [
+          record.transactionNo,
+          record.date,
+          record.payee,
+          record.employeeName,
+          record.receiptNo,
+          record.location,
+          record.address,
+          record.destination,
+          record.remarks,
+          record.total,
+          record.itemCount,
+        ]);
+
+      const detailRows: (string | number)[][] = filtered.flatMap((record) => {
+        const orderedItems = [...(record.daily_record_items || [])].sort(
+          (a, b) => Number(a.item_order) - Number(b.item_order)
+        );
+
+        return orderedItems.map((item) => [
+          formatTransactionNo(record.transaction_no),
+          formatExcelDate(record.record_date),
+          record.payee || "",
+          record.employee_name || "",
+          record.receipt_no || "",
+          record.locations?.name || "",
+          record.address || "",
+          destinationLabel(record.destination),
+          item.description || "",
+          Number(item.amount || 0),
+          record.remarks || "",
+        ]);
+      });
+
+      const summaryTotal = filtered.reduce(
+        (sum, record) => sum + getRecordTotal(record),
+        0
       );
-      return recordItems.map((item) => ({
-        "Transaction No.": formatTransactionNo(record.transaction_no),
-        Date: formatExcelDate(record.record_date),
-        Payee: record.payee,
-        "Employee Name": record.employee_name || "",
-        "Receipt No.": record.receipt_no || "",
-        "Project Location": record.locations?.name || "",
-        "Project Address": record.address || "",
-        Destination: destinationLabel(record.destination),
-        "Item Description": item.description,
-        Amount: Number(item.amount),
-        Remarks: record.remarks || "",
-      }));
-    });
 
-    const workbook = XLSX.utils.book_new();
-    const summaryTotal = filtered.reduce((sum, record) => sum + getRecordTotal(record), 0);
-    const detailTotal = detailRows.reduce((sum, row) => sum + Number(row.Amount || 0), 0);
-    const summaryOutput = summaryRows.length ? [
-      ...summaryRows,
-      {
-        "Transaction No.": "",
-        Date: "",
-        Payee: "",
-        "Employee Name": "",
-        "Receipt No.": "",
-        "Project Location": "",
-        "Project Address": "",
-        Destination: "",
-        Remarks: "OVERALL TOTAL",
-        "Total Amount": Number(summaryTotal.toFixed(2)),
-        "Item Count": filtered.reduce((sum, record) => sum + (record.daily_record_items || []).length, 0),
-      },
-    ] : [{
-      "Transaction No.": "", Date: "", Payee: "", "Employee Name": "",
-      "Receipt No.": "", "Project Location": "", "Project Address": "",
-      Destination: "", Remarks: "NO RECORDS", "Total Amount": 0, "Item Count": 0,
-    }];
-    const detailOutput = detailRows.length ? [
-      ...detailRows,
-      {
-        "Transaction No.": "",
-        Date: "",
-        Payee: "",
-        "Employee Name": "",
-        "Receipt No.": "",
-        "Project Location": "",
-        "Project Address": "",
-        Destination: "",
-        "Item Description": "OVERALL TOTAL",
-        Amount: Number(detailTotal.toFixed(2)),
-        Remarks: "",
-      },
-    ] : [{
-      "Transaction No.": "", Date: "", Payee: "", "Employee Name": "",
-      "Receipt No.": "", "Project Location": "", "Project Address": "",
-      Destination: "", "Item Description": "NO RECORDS", Amount: 0, Remarks: "",
-    }];
-    const summarySheet = XLSX.utils.json_to_sheet(summaryOutput);
-    const detailsSheet = XLSX.utils.json_to_sheet(detailOutput);
-    summarySheet["!autofilter"] = { ref: `A1:K${Math.max(1, summaryRows.length + 1)}` };
-    detailsSheet["!autofilter"] = { ref: `A1:K${Math.max(1, detailRows.length + 1)}` };
-    summarySheet["!cols"] = [
-      { wch: 22 }, { wch: 14 }, { wch: 24 }, { wch: 24 }, { wch: 18 },
-      { wch: 28 }, { wch: 36 }, { wch: 24 }, { wch: 32 }, { wch: 16 }, { wch: 12 },
-    ];
-    detailsSheet["!cols"] = [
-      { wch: 22 }, { wch: 14 }, { wch: 24 }, { wch: 24 }, { wch: 18 },
-      { wch: 28 }, { wch: 36 }, { wch: 24 }, { wch: 42 }, { wch: 16 }, { wch: 32 },
-    ];
-    XLSX.utils.book_append_sheet(workbook, summarySheet, "Transaction Summary");
-    XLSX.utils.book_append_sheet(workbook, detailsSheet, "Complete Item Details");
-    const periodName = period[0].toUpperCase() + period.slice(1);
-    XLSX.writeFile(workbook, `Daily-Records-${periodName}-${startText}-to-${endText}.xlsx`);
-    setSaveMessage(
-      `Exported ${filtered.length} transaction(s) for ${periodName.toLowerCase()} report (${startText} to ${endText}).`
-    );
-    setSaveMessageType("success");
+      const detailTotal = detailRows.reduce(
+        (sum, row) => sum + Number(row[9] || 0),
+        0
+      );
+
+      const summaryItemCount = filtered.reduce(
+        (sum, record) => sum + (record.daily_record_items || []).length,
+        0
+      );
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "DCYES Finance Management System";
+      workbook.subject = allRecords
+        ? "All Daily Records - All Projects"
+        : `${period} Daily Records Report`;
+      workbook.title = allRecords
+        ? "All Daily Records - All Projects"
+        : `Daily Records ${period} Report`;
+      workbook.created = new Date();
+      workbook.modified = new Date();
+
+      function buildSheet(
+        name: string,
+        headers: string[],
+        rows: (string | number)[][],
+        widths: number[],
+        amountColumn: number,
+        totalLabelColumn: number,
+        totalAmount: number,
+        totalCount?: number
+      ) {
+        const sheet = workbook.addWorksheet(name);
+
+        sheet.columns = headers.map((header, index) => ({
+          header,
+          key: `column${index + 1}`,
+          width: widths[index] || 18,
+        }));
+
+        sheet.mergeCells(1, 1, 1, headers.length);
+        sheet.getCell(1, 1).value = "DCYES FINANCE MANAGEMENT SYSTEM";
+        sheet.getCell(1, 1).font = {
+          name: "Arial",
+          size: 16,
+          bold: true,
+          color: { argb: "FFFFFFFF" },
+        };
+        sheet.getCell(1, 1).alignment = {
+          vertical: "middle",
+          horizontal: "center",
+        };
+        sheet.getCell(1, 1).fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FF17365D" },
+        };
+        sheet.getRow(1).height = 30;
+
+        sheet.mergeCells(2, 1, 2, headers.length);
+        sheet.getCell(2, 1).value = name.toUpperCase();
+        sheet.getCell(2, 1).font = {
+          name: "Arial",
+          size: 12,
+          bold: true,
+          color: { argb: "FF17365D" },
+        };
+        sheet.getCell(2, 1).alignment = { horizontal: "center" };
+        sheet.getRow(2).height = 23;
+
+        sheet.mergeCells(3, 1, 3, headers.length);
+        sheet.getCell(3, 1).value = allRecords
+          ? `Period: ALL RECORDS | ${startText} to ${endText}`
+          : `Period: ${period.toUpperCase()} | ${startText} to ${endText}`;
+        sheet.getCell(3, 1).font = {
+          name: "Arial",
+          size: 10,
+          italic: true,
+          color: { argb: "FF475569" },
+        };
+        sheet.getCell(3, 1).alignment = { horizontal: "center" };
+        sheet.getRow(3).height = 21;
+
+        sheet.addRow([]);
+        const headerRow = sheet.addRow(headers);
+        headerRow.height = 30;
+
+        headerRow.eachCell((cell) => {
+          cell.font = {
+            name: "Arial",
+            size: 10,
+            bold: true,
+            color: { argb: "FFFFFFFF" },
+          };
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FF1F4E78" },
+          };
+          cell.alignment = {
+            vertical: "middle",
+            horizontal: "center",
+            wrapText: true,
+          };
+          cell.border = {
+            top: { style: "thin", color: { argb: "FFB4C6E7" } },
+            bottom: { style: "thin", color: { argb: "FFB4C6E7" } },
+            left: { style: "thin", color: { argb: "FFD9E2F3" } },
+            right: { style: "thin", color: { argb: "FFD9E2F3" } },
+          };
+        });
+
+        if (rows.length === 0) {
+          const emptyRow = sheet.addRow(
+            headers.map((_, index) =>
+              index === totalLabelColumn - 1 ? "NO RECORDS" : ""
+            )
+          );
+          emptyRow.font = {
+            name: "Arial",
+            size: 10,
+            italic: true,
+            color: { argb: "FF64748B" },
+          };
+        } else {
+          rows.forEach((values, index) => {
+            const row = sheet.addRow(values);
+            row.height = 22;
+
+            row.eachCell((cell, columnNumber) => {
+              cell.font = { name: "Arial", size: 10 };
+              cell.alignment = {
+                vertical: "top",
+                wrapText: true,
+              };
+
+              if (index % 2 === 1) {
+                cell.fill = {
+                  type: "pattern",
+                  pattern: "solid",
+                  fgColor: { argb: "FFF0F6FC" },
+                };
+              }
+
+              cell.border = {
+                bottom: {
+                  style: "hair",
+                  color: { argb: "FFD9E2F3" },
+                },
+              };
+
+              if (columnNumber === amountColumn) {
+                cell.numFmt = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
+                cell.alignment = {
+                  vertical: "top",
+                  horizontal: "right",
+                };
+              }
+            });
+          });
+
+          const totalValues: (string | number)[] = headers.map(() => "");
+          totalValues[totalLabelColumn - 1] = "OVERALL TOTAL";
+          totalValues[amountColumn - 1] = Number(totalAmount.toFixed(2));
+
+          if (typeof totalCount === "number") {
+            totalValues[headers.length - 1] = totalCount;
+          }
+
+          const totalRow = sheet.addRow(totalValues);
+          totalRow.height = 26;
+
+          totalRow.eachCell((cell, columnNumber) => {
+            cell.font = {
+              name: "Arial",
+              size: 10,
+              bold: true,
+              color: { argb: "FFFFFFFF" },
+            };
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: { argb: "FF17365D" },
+            };
+            cell.border = {
+              top: { style: "medium", color: { argb: "FF17365D" } },
+            };
+
+            if (columnNumber === amountColumn) {
+              cell.numFmt = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
+              cell.alignment = { horizontal: "right" };
+            }
+          });
+        }
+
+        const lastRow = sheet.rowCount;
+        const lastDataRow = Math.max(5, 4 + rows.length);
+
+        sheet.autoFilter = {
+          from: { row: 5, column: 1 },
+          to: { row: lastDataRow, column: headers.length },
+        };
+
+        sheet.views = [
+          {
+            state: "frozen",
+            xSplit: 0,
+            ySplit: 5,
+            showGridLines: false,
+          },
+        ];
+
+        sheet.pageSetup = {
+          paperSize: 9,
+          orientation: "landscape",
+          fitToPage: true,
+          fitToWidth: 1,
+          fitToHeight: 0,
+          margins: {
+            left: 0.25,
+            right: 0.25,
+            top: 0.5,
+            bottom: 0.5,
+            header: 0.2,
+            footer: 0.2,
+          },
+        };
+
+        sheet.pageSetup.printArea = `A1:${String.fromCharCode(64 + headers.length)}${lastRow}`;
+        sheet.headerFooter.oddFooter =
+          "&LDCYES Finance Management System&CPage &P of &N&RConfidential";
+
+        return sheet;
+      }
+
+      buildSheet(
+        "Transaction Summary",
+        summaryHeaders,
+        summaryRows,
+        [18, 16, 25, 25, 18, 26, 36, 24, 32, 18, 13],
+        10,
+        9,
+        summaryTotal,
+        summaryItemCount
+      );
+
+      buildSheet(
+        "Complete Item Details",
+        detailHeaders,
+        detailRows,
+        [18, 16, 25, 25, 18, 26, 36, 24, 42, 18, 32],
+        10,
+        9,
+        detailTotal
+      );
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer as BlobPart], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      const periodName = allRecords
+        ? "All-Records-All-Projects"
+        : period[0].toUpperCase() + period.slice(1);
+
+      link.href = url;
+      link.download = allRecords
+        ? `Daily-Records-${periodName}.xlsx`
+        : `Daily-Records-${periodName}-${startText}-to-${endText}.xlsx`;
+
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+
+      setSaveMessage(
+        allRecords
+          ? `Exported all ${filtered.length} transaction(s) from all project locations, including their item details.`
+          : `Exported ${filtered.length} transaction(s) for ${period.toLowerCase()} report (${startText} to ${endText}).`
+      );
+      setSaveMessageType("success");
+    } catch (error) {
+      console.error("Daily Records Excel export error:", error);
+      setSaveMessage(
+        error instanceof Error
+          ? `Excel export failed: ${error.message}`
+          : "Excel export failed. Please check the browser console."
+      );
+      setSaveMessageType("error");
+    }
+  }
+
+  // NEW: Fetch every database page for the all-projects export.
+  // This avoids relying on the records currently loaded in the table.
+  async function exportAllRecords() {
+    setSaveMessage("Loading all Daily Records from the database for export...");
+    setSaveMessageType("info");
+
+    try {
+      const pageSize = 1000;
+      let from = 0;
+      const allRows: DailyRecord[] = [];
+
+      while (true) {
+        const { data, error } = await supabase
+          .from("daily_records")
+          .select(`
+            id,
+            transaction_no,
+            record_date,
+            payee,
+            employee_name,
+            receipt_no,
+            address,
+            remarks,
+            location_id,
+            destination,
+            created_at,
+            locations ( name ),
+            daily_record_items (
+              id,
+              description,
+              amount,
+              item_order
+            )
+          `)
+          .order("record_date", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, from + pageSize - 1);
+
+        if (error) {
+          console.error("Export all Daily Records query error:", {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint,
+            from,
+          });
+
+          throw new Error(
+            `Unable to load all records from the database: ${error.message}`
+          );
+        }
+
+        const batch = (data || []) as unknown as DailyRecord[];
+        allRows.push(...batch);
+
+        if (batch.length < pageSize) break;
+
+        from += pageSize;
+      }
+
+      if (allRows.length === 0) {
+        setSaveMessage("There are no Daily Records to export.");
+        setSaveMessageType("error");
+        return;
+      }
+
+      await exportReport(allRows, "monthly", reportDate, true);
+    } catch (error) {
+      console.error("Export all Daily Records error:", error);
+      setSaveMessage(
+        error instanceof Error
+          ? error.message
+          : "Unable to export all Daily Records. Please check the browser console."
+      );
+      setSaveMessageType("error");
+    }
   }
 
   async function uploadReceipt(record: DailyRecord, file: File) {
@@ -956,17 +1424,17 @@ export default function DailyRecordsPage() {
             >
               ← Back to Dashboard
             </a>
-          {!loadingProfile && (
-            <div
-              className={`rounded-full px-4 py-2 text-sm font-semibold ${
-                isAdmin
-                  ? "bg-blue-100 text-blue-700"
-                  : "bg-slate-200 text-slate-600"
-              }`}
-            >
-              {isAdmin ? "Admin controls" : "Read-only access"}
-            </div>
-          )}
+            {!loadingProfile && (
+              <div
+                className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                  isAdmin
+                    ? "bg-blue-100 text-blue-700"
+                    : "bg-slate-200 text-slate-600"
+                }`}
+              >
+                {isAdmin ? "Admin controls" : "Read-only access"}
+              </div>
+            )}
           </div>
         </div>
 
@@ -1289,7 +1757,13 @@ export default function DailyRecordsPage() {
                     disabled={saving || loadingProfile || !isAdmin}
                     className="flex-1 rounded-lg bg-slate-900 px-4 py-3 font-semibold text-white disabled:bg-slate-300"
                   >
-                    {saving ? (editingRecordId ? "Updating..." : "Saving...") : (editingRecordId ? "Update Daily Record" : "Save Daily Record")}
+                    {saving
+                      ? editingRecordId
+                        ? "Updating..."
+                        : "Saving..."
+                      : editingRecordId
+                        ? "Update Daily Record"
+                        : "Save Daily Record"}
                   </button>
 
                   <button
@@ -1320,7 +1794,11 @@ export default function DailyRecordsPage() {
                     Report
                     <select
                       value={reportPeriod}
-                      onChange={(e) => setReportPeriod(e.target.value as "daily" | "weekly" | "monthly")}
+                      onChange={(e) =>
+                        setReportPeriod(
+                          e.target.value as "daily" | "weekly" | "monthly"
+                        )
+                      }
                       className="ml-2 rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm"
                     >
                       <option value="daily">Daily</option>
@@ -1328,20 +1806,44 @@ export default function DailyRecordsPage() {
                       <option value="monthly">Monthly</option>
                     </select>
                   </label>
+
                   <input
                     type={reportPeriod === "monthly" ? "month" : "date"}
-                    value={reportPeriod === "monthly" ? reportDate.slice(0, 7) : reportDate}
-                    onChange={(e) => setReportDate(reportPeriod === "monthly" ? `${e.target.value}-01` : e.target.value)}
+                    value={
+                      reportPeriod === "monthly"
+                        ? reportDate.slice(0, 7)
+                        : reportDate
+                    }
+                    onChange={(e) =>
+                      setReportDate(
+                        reportPeriod === "monthly"
+                          ? `${e.target.value}-01`
+                          : e.target.value
+                      )
+                    }
                     className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
                     aria-label="Report date"
                   />
+
                   <button
                     type="button"
-                    onClick={() => exportReport(records, reportPeriod, reportDate)}
+                    onClick={() =>
+                      void exportReport(records, reportPeriod, reportDate)
+                    }
                     className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
                   >
                     Export Excel
                   </button>
+
+                  {/* NEW: exports all records, across all project locations */}
+                  <button
+                    type="button"
+                    onClick={() => void exportAllRecords()}
+                    className="rounded-lg bg-blue-800 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-900"
+                  >
+                    Export All Records (All Projects)
+                  </button>
+
                   <a
                     href="/dashboard/receipt-gallery"
                     className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
@@ -1500,23 +2002,35 @@ export default function DailyRecordsPage() {
                                 Open Gallery
                               </a>
                             </td>
+
                             <td className="min-w-[150px] px-4 py-4">
                               <div className="flex flex-col gap-2">
                                 <button
                                   type="button"
-                                  disabled={!isAdmin || saving || deletingRecordId !== null}
+                                  disabled={
+                                    !isAdmin ||
+                                    saving ||
+                                    deletingRecordId !== null
+                                  }
                                   onClick={() => beginEdit(record)}
                                   className="rounded-md border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
                                 >
                                   Edit
                                 </button>
+
                                 <button
                                   type="button"
-                                  disabled={!isAdmin || saving || deletingRecordId !== null}
+                                  disabled={
+                                    !isAdmin ||
+                                    saving ||
+                                    deletingRecordId !== null
+                                  }
                                   onClick={() => void deleteRecord(record)}
                                   className="rounded-md border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
                                 >
-                                  {deletingRecordId === record.id ? "Deleting..." : "Delete"}
+                                  {deletingRecordId === record.id
+                                    ? "Deleting..."
+                                    : "Delete"}
                                 </button>
                               </div>
                             </td>

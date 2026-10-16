@@ -1,370 +1,1006 @@
-
+﻿
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { supabase } from "@/lib/supabase";
 
-type Attachment = {
-  id: number;
-  daily_record_id: number;
+type LocationOption = {
+  id: number | string;
+  name: string;
+};
+
+type FileRecord = {
+  id: number | string;
+  location_id?: number | string | null;
+  location_name?: string | null;
+  daily_record_id?: number | string | null;
+  original_file_name?: string | null;
+  file_name?: string | null;
+  storage_path?: string | null;
+  file_path?: string | null;
+  content_type?: string | null;
+  mime_type?: string | null;
+  file_size?: number | string | null;
+  receipt_date?: string | null;
+  description?: string | null;
+  remarks?: string | null;
+  created_at?: string | null;
+  signed_url?: string | null;
+  signedUrl?: string | null;
+};
+
+type GalleryItem = {
+  id: string;
+  recordId: number | string;
+  kind: "standalone" | "daily";
+  locationId: string;
+  locationName: string;
   original_file_name: string;
   storage_path: string;
-  mime_type: string;
+  content_type: string;
   file_size: number;
   created_at: string;
-};
-
-type RecordInfo = {
-  transaction_no: string;
-  record_date: string;
-  payee: string;
-  receipt_no: string | null;
-  locations?: { name: string } | null;
-};
-
-type GalleryItem = Attachment & {
-  record: RecordInfo | null;
   signedUrl: string | null;
+  description: string;
 };
 
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-PH", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(value));
+const BUCKET = "daily-record-proofs";
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+
+function getFileName(row: FileRecord) {
+  return (
+    row.original_file_name ||
+    row.file_name ||
+    row.storage_path?.split("/").pop() ||
+    row.file_path?.split("/").pop() ||
+    "Receipt file"
+  );
 }
 
-function formatBytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${(value / (1024 * 1024)).toFixed(2)} MB`;
+function getStoragePath(row: FileRecord) {
+  return row.storage_path || row.file_path || "";
+}
+
+function getContentType(row: FileRecord) {
+  const provided = row.content_type || row.mime_type;
+
+  if (provided) return provided.toLowerCase();
+
+  const name = getFileName(row).toLowerCase();
+
+  if (name.endsWith(".jpg") || name.endsWith(".jpeg")) {
+    return "image/jpeg";
+  }
+
+  if (name.endsWith(".png")) return "image/png";
+  if (name.endsWith(".webp")) return "image/webp";
+  if (name.endsWith(".gif")) return "image/gif";
+  if (name.endsWith(".pdf")) return "application/pdf";
+
+  return "application/octet-stream";
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleDateString("en-PH", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "Asia/Manila",
+  });
+}
+
+function formatBytes(bytes?: number | null) {
+  if (bytes == null || !Number.isFinite(bytes) || bytes < 0) {
+    return "Unknown size";
+  }
+
+  if (bytes < 1024) return `${bytes} B`;
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
 export default function ReceiptGalleryPage() {
   const [items, setItems] = useState<GalleryItem[]>([]);
+  const [locations, setLocations] = useState<LocationOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
   const [message, setMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
   const [search, setSearch] = useState("");
   const [locationFilter, setLocationFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
-  const loadGallery = useCallback(async () => {
-    setLoading(true);
-    setMessage("");
+  const [uploadLocation, setUploadLocation] = useState("");
+  const [receiptDate, setReceiptDate] = useState(
+    new Date().toLocaleDateString("en-CA", {
+      timeZone: "Asia/Manila",
+    })
+  );
+  const [description, setDescription] = useState("");
+  const [remarks, setRemarks] = useState("");
+  const [file, setFile] = useState<File | null>(null);
 
-    try {
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
+  const getToken = useCallback(async () => {
+    const {
+      data: { session },
+      error,
+    } = await supabase.auth.getSession();
 
-      if (sessionError || !session?.access_token) {
-        setItems([]);
-        setMessage("Please log in to view receipt attachments.");
-        return;
-      }
+    if (error) {
+      throw new Error("Unable to verify your session. Please sign in again.");
+    }
 
-      const { data, error } = await supabase
-        .from("daily_record_attachments")
-        .select(`
-          id,
-          daily_record_id,
-          original_file_name,
-          storage_path,
-          mime_type,
-          file_size,
-          created_at,
-          daily_records (
-            transaction_no,
-            record_date,
-            payee,
-            receipt_no,
-            locations ( name )
-          )
-        `)
-        .order("created_at", { ascending: false });
+    if (!session?.access_token) {
+      throw new Error("Your session has expired. Please sign in again.");
+    }
+
+    return session.access_token;
+  }, []);
+
+  const createPreviewUrl = useCallback(
+    async (row: FileRecord, existingUrl?: string | null) => {
+      if (existingUrl) return existingUrl;
+
+      const path = getStoragePath(row);
+
+      if (!path) return null;
+
+      const { data, error } = await supabase.storage
+        .from(BUCKET)
+        .createSignedUrl(path, 60 * 10);
 
       if (error) {
-        console.error("Receipt Gallery load error:", error);
-        setItems([]);
-        setMessage(
-          "Unable to load attachments. Check the attachment table permissions and relationship."
+        console.warn(
+          "Unable to create receipt preview URL:",
+          getFileName(row),
+          error.message
         );
-        return;
+        return null;
       }
 
-      const rows = (data || []) as unknown as Array<
-        Attachment & { daily_records: RecordInfo | null }
-      >;
+      return data?.signedUrl || null;
+    },
+    []
+  );
 
-      const galleryItems: GalleryItem[] = await Promise.all(
-        rows.map(async (row) => {
-          const { data: signedData, error: signedError } = await supabase.storage
-            .from("daily-record-proofs")
-            .createSignedUrl(row.storage_path, 300);
+  const loadGallery = useCallback(async () => {
+    setLoading(true);
+    setErrorMessage("");
 
-          if (signedError) {
-            console.error("Receipt signed URL error:", signedError);
-          }
+    try {
+      const token = await getToken();
 
-          const { daily_records: record, ...attachment } = row;
+      const [receiptResponse, locationsResponse, attachmentsResponse] =
+        await Promise.all([
+          fetch("/api/admin/standalone-receipts", {
+            method: "GET",
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
+            cache: "no-store",
+          }),
+          supabase
+            .from("locations")
+            .select("id, name")
+            .order("name", { ascending: true }),
+          supabase
+            .from("daily_record_attachments")
+            .select("*")
+            .order("created_at", { ascending: false }),
+        ]);
+
+      if (!receiptResponse.ok) {
+        const payload = await receiptResponse.json().catch(() => ({}));
+        throw new Error(
+          payload.error || "Unable to load standalone receipts."
+        );
+      }
+
+      if (locationsResponse.error) {
+        throw new Error(
+          `Unable to load locations: ${locationsResponse.error.message}`
+        );
+      }
+
+      if (attachmentsResponse.error) {
+        throw new Error(
+          `Unable to load daily record attachments: ${attachmentsResponse.error.message}`
+        );
+      }
+
+      const receiptPayload = await receiptResponse.json();
+
+      const standaloneRows: FileRecord[] = Array.isArray(receiptPayload)
+        ? receiptPayload
+        : Array.isArray(receiptPayload.receipts)
+          ? receiptPayload.receipts
+          : Array.isArray(receiptPayload.data)
+            ? receiptPayload.data
+            : [];
+
+      const locationRows = (locationsResponse.data ??
+        []) as LocationOption[];
+
+      setLocations(locationRows);
+
+      const locationMap = new Map(
+        locationRows.map((location) => [
+          String(location.id),
+          location.name,
+        ])
+      );
+
+      const standaloneItems: GalleryItem[] = await Promise.all(
+        standaloneRows.map(async (row) => {
+          const locationId =
+            row.location_id == null ? "" : String(row.location_id);
+
+          const signedUrl = await createPreviewUrl(
+            row,
+            row.signed_url || row.signedUrl
+          );
 
           return {
-            ...attachment,
-            record,
-            signedUrl: signedData?.signedUrl || null,
+            id: `standalone-${row.id}`,
+            recordId: row.id,
+            kind: "standalone" as const,
+            locationId,
+            locationName:
+              row.location_name ||
+              locationMap.get(locationId) ||
+              "Unassigned Location",
+            original_file_name: getFileName(row),
+            storage_path: getStoragePath(row),
+            content_type: getContentType(row),
+            file_size: Number(row.file_size || 0),
+            created_at:
+              row.receipt_date ||
+              row.created_at ||
+              new Date().toISOString(),
+            signedUrl,
+            description: row.description || row.remarks || "",
           };
         })
       );
 
-      setItems(galleryItems);
+      const attachmentRows = (attachmentsResponse.data ??
+        []) as FileRecord[];
+
+      const dailyRecordIds = [
+        ...new Set(
+          attachmentRows
+            .map((row) => row.daily_record_id)
+            .filter((id) => id != null)
+            .map((id) => String(id))
+        ),
+      ];
+
+      const dailyRecordLocationMap = new Map<string, string>();
+      const dailyRecordTransactionMap = new Map<string, string>();
+
+      if (dailyRecordIds.length > 0) {
+        const { data: dailyRecords, error: dailyRecordsError } =
+          await supabase
+            .from("daily_records")
+            .select("id, location_id, transaction_no")
+            .in("id", dailyRecordIds);
+
+        if (dailyRecordsError) {
+          throw new Error(
+            `Unable to load daily record details: ${dailyRecordsError.message}`
+          );
+        }
+
+        for (const record of dailyRecords ?? []) {
+          const recordId = String(record.id);
+
+          dailyRecordLocationMap.set(
+            recordId,
+            String(record.location_id)
+          );
+
+          dailyRecordTransactionMap.set(
+            recordId,
+            String(record.transaction_no ?? "")
+          );
+        }
+      }
+
+      const dailyItems: GalleryItem[] = await Promise.all(
+        attachmentRows.map(async (row) => {
+          const signedUrl = await createPreviewUrl(
+            row,
+            row.signed_url || row.signedUrl
+          );
+
+          const recordId =
+            row.daily_record_id == null
+              ? ""
+              : String(row.daily_record_id);
+
+          const locationId = recordId
+            ? dailyRecordLocationMap.get(recordId) || ""
+            : "";
+
+          const transactionNo = recordId
+            ? dailyRecordTransactionMap.get(recordId) || ""
+            : "";
+
+          return {
+            id: `daily-${row.id}`,
+            recordId: row.id,
+            kind: "daily" as const,
+            locationId,
+            locationName:
+              locationMap.get(locationId) || "Unassigned Location",
+            original_file_name: getFileName(row),
+            storage_path: getStoragePath(row),
+            content_type: getContentType(row),
+            file_size: Number(row.file_size || 0),
+            created_at: row.created_at || new Date().toISOString(),
+            signedUrl,
+            description: recordId
+              ? `Daily Record #${transactionNo || recordId}`
+              : "Daily Record Attachment",
+          };
+        })
+      );
+
+      const combined = [...standaloneItems, ...dailyItems].sort(
+        (a, b) =>
+          new Date(b.created_at).getTime() -
+          new Date(a.created_at).getTime()
+      );
+
+      setItems(combined);
     } catch (error) {
-      console.error("Receipt Gallery error:", error);
-      setItems([]);
-      setMessage("An unexpected error occurred while loading the gallery.");
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong while loading the gallery."
+      );
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [createPreviewUrl, getToken]);
 
   useEffect(() => {
     void loadGallery();
   }, [loadGallery]);
 
-  const locationNames = useMemo(
-    () => Array.from(new Set(items.map((item) => item.record?.locations?.name || "Unknown location"))).sort(),
-    [items]
-  );
+  async function handleSave(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage("");
+    setErrorMessage("");
+
+    if (!uploadLocation) {
+      setErrorMessage("Please select a project location.");
+      return;
+    }
+
+    if (!file) {
+      setErrorMessage("Please choose a receipt image or PDF.");
+      return;
+    }
+
+    const allowedTypes = [
+      "image/jpeg",
+      "image/png",
+      "image/webp",
+      "application/pdf",
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      setErrorMessage("Only JPG, PNG, WEBP, and PDF files are allowed.");
+      return;
+    }
+
+    if (file.size > MAX_FILE_SIZE) {
+      setErrorMessage("The file must not exceed 10 MB.");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const token = await getToken();
+      const formData = new FormData();
+
+      formData.append("file", file);
+      formData.append("location_id", uploadLocation);
+      formData.append("receipt_date", receiptDate);
+      formData.append("description", description.trim());
+      formData.append("remarks", remarks.trim());
+
+      const response = await fetch("/api/admin/standalone-receipts", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || "Unable to save the receipt.");
+      }
+
+      setFile(null);
+      setDescription("");
+      setRemarks("");
+
+      const fileInput = document.getElementById(
+        "receipt-file"
+      ) as HTMLInputElement | null;
+
+      if (fileInput) fileInput.value = "";
+
+      await loadGallery();
+      setMessage("Receipt uploaded successfully.");
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong while uploading the receipt."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete(item: GalleryItem) {
+    const confirmed = window.confirm(
+      `Delete "${item.original_file_name}"?\n\n` +
+        (item.kind === "daily"
+          ? "Only this attachment will be deleted. The Daily Record itself will remain."
+          : "This receipt record and its associated file will be deleted.") +
+        "\n\nThis action cannot be undone."
+    );
+
+    if (!confirmed) return;
+
+    setMessage("");
+    setErrorMessage("");
+    setDeletingId(item.id);
+
+    try {
+      const token = await getToken();
+
+      const response = await fetch("/api/admin/standalone-receipts", {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: Number(item.recordId),
+          kind: item.kind,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || "Unable to delete this receipt.");
+      }
+
+      await loadGallery();
+
+      setMessage(
+        payload.warning ||
+          payload.message ||
+          `"${item.original_file_name}" was deleted successfully.`
+      );
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "Something went wrong while deleting the receipt."
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const filteredItems = useMemo(() => {
-    const term = search.trim().toLowerCase();
+    const normalizedSearch = search.trim().toLowerCase();
+
     return items.filter((item) => {
-      const locationName = item.record?.locations?.name || "Unknown location";
-      const recordDate = item.record?.record_date || item.created_at.slice(0, 10);
-      const matchesSearch = !term || [
-        item.original_file_name,
-        item.record?.transaction_no,
-        item.record?.payee,
-        item.record?.receipt_no,
-        locationName,
-      ].some((value) => String(value || "").toLowerCase().includes(term));
-      return matchesSearch &&
-        (locationFilter === "all" || locationName === locationFilter) &&
-        (!dateFrom || recordDate >= dateFrom) &&
-        (!dateTo || recordDate <= dateTo);
+      const matchesSearch =
+        !normalizedSearch ||
+        item.original_file_name.toLowerCase().includes(normalizedSearch) ||
+        item.locationName.toLowerCase().includes(normalizedSearch) ||
+        item.description.toLowerCase().includes(normalizedSearch) ||
+        item.storage_path.toLowerCase().includes(normalizedSearch);
+
+      const matchesLocation =
+        locationFilter === "all" ||
+        item.locationId === locationFilter ||
+        (locationFilter === "daily" && item.kind === "daily");
+
+      const matchesType =
+        typeFilter === "all" ||
+        (typeFilter === "images" &&
+          item.content_type.startsWith("image/")) ||
+        (typeFilter === "pdf" &&
+          item.content_type === "application/pdf");
+
+      const itemDate = item.created_at.slice(0, 10);
+
+      return (
+        matchesSearch &&
+        matchesLocation &&
+        matchesType &&
+        (!dateFrom || itemDate >= dateFrom) &&
+        (!dateTo || itemDate <= dateTo)
+      );
     });
-  }, [items, search, locationFilter, dateFrom, dateTo]);
+  }, [items, search, locationFilter, typeFilter, dateFrom, dateTo]);
 
   const groupedItems = useMemo(() => {
-    return filteredItems.reduce<Record<string, GalleryItem[]>>((groups, item) => {
-      const name = item.record?.locations?.name || "Unknown location";
-      (groups[name] ||= []).push(item);
-      return groups;
-    }, {});
+    const groups = new Map<string, GalleryItem[]>();
+
+    for (const item of filteredItems) {
+      if (!groups.has(item.locationName)) {
+        groups.set(item.locationName, []);
+      }
+
+      groups.get(item.locationName)!.push(item);
+    }
+
+    return Array.from(groups.entries());
   }, [filteredItems]);
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-8">
-      <div className="mx-auto max-w-7xl">
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">
+            <p className="text-sm font-semibold uppercase tracking-wide text-blue-700">
+              DCYES Finance Management System
+            </p>
+            <h1 className="mt-1 text-2xl font-bold sm:text-3xl">
               Receipt / Proof Gallery
             </h1>
-            <p className="mt-2 text-sm text-slate-500">
-              View attachments linked to saved Daily Records.
+            <p className="mt-2 text-sm text-slate-600">
+              View and manage receipt files and proof attachments.
             </p>
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <a
+            <Link
               href="/dashboard"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-100"
             >
               ← Back to Dashboard
-            </a>
-            <a
-              href="/dashboard/daily-records"
-              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
-            >
-              Back to Daily Records
-            </a>
+            </Link>
+
             <button
               type="button"
               onClick={() => void loadGallery()}
-              disabled={loading}
-              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+              disabled={loading || deletingId !== null}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {loading ? "Refreshing..." : "Refresh"}
+              {loading ? "Refreshing..." : "Refresh Gallery"}
             </button>
           </div>
-        </div>
+        </header>
 
         {message && (
-          <div className="mb-5 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+          <div
+            role="status"
+            className="rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800"
+          >
             {message}
           </div>
         )}
 
-        <section className="mb-5 grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-2 xl:grid-cols-4">
-          <label className="text-sm font-semibold text-slate-700">
-            Search receipts
-            <input value={search} onChange={(event) => setSearch(event.target.value)}
-              placeholder="Transaction, payee, receipt, file..."
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal outline-none focus:border-blue-500" />
-          </label>
-          <label className="text-sm font-semibold text-slate-700">
-            Project / Location
-            <select value={locationFilter} onChange={(event) => setLocationFilter(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-normal">
-              <option value="all">All projects</option>
-              {locationNames.map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
-          </label>
-          <label className="text-sm font-semibold text-slate-700">
-            From date
-            <input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal" />
-          </label>
-          <label className="text-sm font-semibold text-slate-700">
-            To date
-            <input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 font-normal" />
-          </label>
-          <div className="md:col-span-2 xl:col-span-4 flex items-center justify-between gap-3 text-sm text-slate-500">
-            <span>{filteredItems.length} receipt(s) · {Object.keys(groupedItems).length} project/location(s)</span>
-            <button type="button" onClick={() => { setSearch(""); setLocationFilter("all"); setDateFrom(""); setDateTo(""); }}
-              className="rounded-lg border border-slate-300 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-50">
-              Clear filters
-            </button>
-          </div>
-        </section>
-
-        {loading ? (
-          <div className="rounded-2xl border bg-white p-12 text-center text-slate-500">
-            Loading attachments...
-          </div>
-        ) : items.length === 0 ? (
-          <div className="rounded-2xl border bg-white p-12 text-center">
-            <div className="text-4xl">🧾</div>
-            <h2 className="mt-3 font-bold text-slate-900">
-              {items.length === 0 ? "No receipt attachments yet" : "No receipts match these filters"}
-            </h2>
-            <p className="mt-2 text-sm text-slate-500">
-              {items.length === 0 ? "Upload a receipt from a saved Daily Record to see it here." : "Try another search term, project, or date range."}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-8">
-            {Object.entries(groupedItems).map(([locationName, locationItems]) => (
-              <section key={locationName}>
-                <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-2">
-                  <h2 className="text-lg font-bold text-slate-900">📁 {locationName}</h2>
-                  <span className="text-sm text-slate-500">{locationItems.length} receipt(s)</span>
-                </div>
-                <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-                {locationItems.map((item) => (
-              <article
-                key={item.id}
-                className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-              >
-                <div className="flex h-48 items-center justify-center overflow-hidden bg-slate-100">
-                  {item.signedUrl && item.mime_type.startsWith("image/") ? (
-                    <a
-                      href={item.signedUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="flex h-full w-full items-center justify-center"
-                    >
-                      <img
-                        src={item.signedUrl}
-                        alt={item.original_file_name}
-                        className="max-h-full max-w-full object-contain"
-                      />
-                    </a>
-                  ) : (
-                    <div className="text-center">
-                      <div className="text-5xl">
-                        {item.mime_type === "application/pdf" ? "📄" : "🧾"}
-                      </div>
-                      <p className="mt-2 text-sm font-semibold text-slate-600">
-                        {item.mime_type === "application/pdf"
-                          ? "PDF Document"
-                          : "Attachment"}
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                <div className="space-y-3 p-5">
-                  <div>
-                    <h2 className="break-words font-bold text-slate-900">
-                      {item.original_file_name}
-                    </h2>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {formatBytes(Number(item.file_size || 0))} ·{" "}
-                      {formatDate(item.created_at)}
-                    </p>
-                  </div>
-
-                  <div className="space-y-1 text-sm">
-                    <p>
-                      <span className="text-slate-500">Transaction:</span>{" "}
-                      <strong>{item.record?.transaction_no || "-"}</strong>
-                    </p>
-                    <p>
-                      <span className="text-slate-500">Record Date:</span>{" "}
-                      {item.record?.record_date
-                        ? formatDate(item.record.record_date)
-                        : "-"}
-                    </p>
-                    <p>
-                      <span className="text-slate-500">Payee:</span>{" "}
-                      {item.record?.payee || "-"}
-                    </p>
-                    <p>
-                      <span className="text-slate-500">Location:</span>{" "}
-                      {item.record?.locations?.name || "-"}
-                    </p>
-                    <p>
-                      <span className="text-slate-500">Receipt No.:</span>{" "}
-                      {item.record?.receipt_no || "-"}
-                    </p>
-                  </div>
-
-                  {item.signedUrl ? (
-                    <div className="flex gap-2 border-t pt-4">
-                      <a
-                        href={item.signedUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="flex-1 rounded-lg bg-slate-900 px-3 py-2 text-center text-sm font-semibold text-white"
-                      >
-                        View
-                      </a>
-                      <a
-                        href={item.signedUrl}
-                        download={item.original_file_name}
-                        className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-center text-sm font-semibold text-slate-700"
-                      >
-                        Download
-                      </a>
-                    </div>
-                  ) : (
-                    <p className="border-t pt-3 text-xs text-red-600">
-                      Unable to create a temporary file link. Check storage permissions.
-                    </p>
-                  )}
-                </div>
-              </article>
-                ))}
-                </div>
-              </section>
-            ))}
+        {errorMessage && (
+          <div
+            role="alert"
+            className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800"
+          >
+            {errorMessage}
           </div>
         )}
+
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-bold">Upload a Receipt / Proof</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            JPG, PNG, WEBP, or PDF. Maximum file size: 10 MB.
+          </p>
+
+          <form
+            onSubmit={handleSave}
+            className="mt-4 grid gap-4 md:grid-cols-2"
+          >
+            <div>
+              <label
+                htmlFor="receipt-location"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Project Location
+              </label>
+              <select
+                id="receipt-location"
+                value={uploadLocation}
+                onChange={(event) => setUploadLocation(event.target.value)}
+                required
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+              >
+                <option value="">Select a location</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={String(location.id)}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="receipt-date"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Receipt Date
+              </label>
+              <input
+                id="receipt-date"
+                type="date"
+                value={receiptDate}
+                onChange={(event) => setReceiptDate(event.target.value)}
+                required
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="receipt-description"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Description
+              </label>
+              <input
+                id="receipt-description"
+                type="text"
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder="e.g. Office supplies receipt"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="receipt-remarks"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Remarks
+              </label>
+              <input
+                id="receipt-remarks"
+                type="text"
+                value={remarks}
+                onChange={(event) => setRemarks(event.target.value)}
+                placeholder="Optional remarks"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+              />
+            </div>
+
+            <div className="md:col-span-2">
+              <label
+                htmlFor="receipt-file"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Receipt File
+              </label>
+              <input
+                id="receipt-file"
+                type="file"
+                accept="image/jpeg,image/png,image/webp,application/pdf"
+                onChange={(event) =>
+                  setFile(event.target.files?.[0] ?? null)
+                }
+                required
+                className="block w-full rounded-lg border border-slate-300 bg-white text-sm"
+              />
+              {file && (
+                <p className="mt-1 text-xs text-slate-500">
+                  {file.name} · {formatBytes(file.size)}
+                </p>
+              )}
+            </div>
+
+            <div className="md:col-span-2">
+              <button
+                type="submit"
+                disabled={saving || loading || deletingId !== null}
+                className="rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {saving ? "Uploading..." : "Upload Receipt"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="mb-4">
+            <h2 className="text-lg font-bold">Saved Receipts and Proofs</h2>
+            <p className="text-sm text-slate-600">
+              {filteredItems.length} file
+              {filteredItems.length === 1 ? "" : "s"} found
+            </p>
+          </div>
+
+          <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <div className="lg:col-span-2">
+              <label
+                htmlFor="gallery-search"
+                className="mb-1 block text-xs font-semibold text-slate-600"
+              >
+                Search
+              </label>
+              <input
+                id="gallery-search"
+                type="search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Search filename, location, description..."
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="gallery-location"
+                className="mb-1 block text-xs font-semibold text-slate-600"
+              >
+                Location / Source
+              </label>
+              <select
+                id="gallery-location"
+                value={locationFilter}
+                onChange={(event) => setLocationFilter(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                <option value="all">All locations</option>
+                <option value="daily">Daily record attachments</option>
+                {locations.map((location) => (
+                  <option key={location.id} value={String(location.id)}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label
+                htmlFor="gallery-type"
+                className="mb-1 block text-xs font-semibold text-slate-600"
+              >
+                File Type
+              </label>
+              <select
+                id="gallery-type"
+                value={typeFilter}
+                onChange={(event) => setTypeFilter(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              >
+                <option value="all">All files</option>
+                <option value="images">Images</option>
+                <option value="pdf">PDF files</option>
+              </select>
+            </div>
+
+            <div className="flex items-end">
+              <button
+                type="button"
+                onClick={() => {
+                  setSearch("");
+                  setLocationFilter("all");
+                  setTypeFilter("all");
+                  setDateFrom("");
+                  setDateTo("");
+                }}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+              >
+                Clear Filters
+              </button>
+            </div>
+
+            <div>
+              <label
+                htmlFor="gallery-from"
+                className="mb-1 block text-xs font-semibold text-slate-600"
+              >
+                Date From
+              </label>
+              <input
+                id="gallery-from"
+                type="date"
+                value={dateFrom}
+                onChange={(event) => setDateFrom(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+
+            <div>
+              <label
+                htmlFor="gallery-to"
+                className="mb-1 block text-xs font-semibold text-slate-600"
+              >
+                Date To
+              </label>
+              <input
+                id="gallery-to"
+                type="date"
+                value={dateTo}
+                onChange={(event) => setDateTo(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="rounded-lg border border-dashed border-slate-300 p-10 text-center text-sm text-slate-500">
+              Loading receipt gallery...
+            </div>
+          ) : filteredItems.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-slate-300 p-10 text-center">
+              <p className="font-semibold text-slate-700">
+                No receipts or proofs found.
+              </p>
+              <p className="mt-1 text-sm text-slate-500">
+                Try adjusting the filters.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-8">
+              {groupedItems.map(([groupName, groupItems]) => (
+                <div key={groupName}>
+                  <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-2">
+                    <h3 className="font-bold text-slate-800">
+                      {groupName}
+                    </h3>
+                    <span className="text-xs text-slate-500">
+                      {groupItems.length} file
+                      {groupItems.length === 1 ? "" : "s"}
+                    </span>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {groupItems.map((item) => {
+                      const isDeleting = deletingId === item.id;
+                      const isImage = item.content_type.startsWith("image/");
+                      const isPdf =
+                        item.content_type === "application/pdf";
+
+                      return (
+                        <article
+                          key={item.id}
+                          className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+                        >
+                          <div className="flex h-44 items-center justify-center overflow-hidden bg-slate-100">
+                            {item.signedUrl && isImage ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={item.signedUrl}
+                                alt={item.original_file_name}
+                                className="h-full w-full object-contain"
+                                onError={() => {
+                                  console.warn(
+                                    "Receipt image failed to load:",
+                                    item.original_file_name,
+                                    item.storage_path
+                                  );
+                                }}
+                              />
+                            ) : (
+                              <div className="px-4 text-center">
+                                <div className="text-4xl">
+                                  {isPdf ? "📄" : "🧾"}
+                                </div>
+                                <p className="mt-2 text-xs font-semibold uppercase text-slate-600">
+                                  {isPdf ? "PDF Document" : "Receipt File"}
+                                </p>
+                                {!item.signedUrl && (
+                                  <p className="mt-1 text-xs text-amber-700">
+                                    Preview URL unavailable
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="space-y-3 p-4">
+                            <div>
+                              <p
+                                className="break-words text-sm font-semibold text-slate-800"
+                                title={item.original_file_name}
+                              >
+                                {item.original_file_name}
+                              </p>
+                              <p className="mt-1 text-xs text-slate-500">
+                                {formatDate(item.created_at)} ·{" "}
+                                {formatBytes(item.file_size)}
+                              </p>
+                              {item.description && (
+                                <p className="mt-2 break-words text-xs text-slate-600">
+                                  {item.description}
+                                </p>
+                              )}
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              {item.signedUrl ? (
+                                <>
+                                  <a
+                                    href={item.signedUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                                  >
+                                    View
+                                  </a>
+                                  <a
+                                    href={item.signedUrl}
+                                    download={item.original_file_name}
+                                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                                  >
+                                    Download
+                                  </a>
+                                </>
+                              ) : (
+                                <span className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                  Preview unavailable
+                                </span>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => void handleDelete(item)}
+                                disabled={
+                                  deletingId !== null || saving || loading
+                                }
+                                className="rounded-lg border border-red-300 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                {isDeleting ? "Deleting..." : "Delete"}
+                              </button>
+                            </div>
+
+                            <p className="text-[11px] text-slate-400">
+                              {item.kind === "daily"
+                                ? "Daily record attachment"
+                                : "Standalone receipt"}
+                            </p>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );
