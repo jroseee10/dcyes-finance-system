@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 
 
@@ -349,24 +349,22 @@ export default function DashboardPage() {
 
 
       if (locationsResult.error) {
+  const locationsError = locationsResult.error;
 
-        console.error(
+  console.error("Locations error details:", {
+    message: locationsError.message,
+    code: locationsError.code,
+    details: locationsError.details,
+    hint: locationsError.hint,
+    status: (locationsError as typeof locationsError & {
+      status?: number;
+    }).status,
+  });
 
-          "Locations error:",
-
-          locationsResult.error
-
-        );
-
-
-
-        errors.push(
-
-          "Locations could not be loaded."
-
-        );
-
-      }
+  errors.push(
+    "Locations could not be loaded. Check the browser console for the exact database error."
+  );
+}
 
 
 
@@ -1181,7 +1179,7 @@ export default function DashboardPage() {
 
           name:
 
-            "⚠️ Unassigned Records",
+            "âš ï¸ Unassigned Records",
 
 
 
@@ -2091,7 +2089,7 @@ export default function DashboardPage() {
 
               ? "Loading..."
 
-              : "↻ Refresh"}
+              : "â†» Refresh"}
 
           </button>
 
@@ -2111,7 +2109,7 @@ export default function DashboardPage() {
 
           <div className="mb-6 rounded-xl border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-800">
 
-            ⚠️ {errorMessage}
+            âš ï¸ {errorMessage}
 
           </div>
 
@@ -2463,7 +2461,7 @@ export default function DashboardPage() {
 
             <h2 className="text-xl font-bold text-slate-900">
 
-              📍 Location Overview
+              ðŸ“ Location Overview
 
             </h2>
 
