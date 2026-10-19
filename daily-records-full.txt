@@ -1,0 +1,455 @@
+﻿
+  async function exportReport(
+    sourceRecords: DailyRecord[],
+    period: "daily" | "weekly" | "monthly",
+    referenceDate: string
+  ) {
+    if (!referenceDate) {
+      setSaveMessage("Choose a date for the report.");
+      setSaveMessageType("error");
+      return;
+    }
+
+    try {
+      const selected = new Date(`${referenceDate.slice(0, 10)}T00:00:00`);
+      let start = new Date(selected);
+      let end = new Date(selected);
+
+      if (period === "weekly") {
+        const day = (selected.getDay() + 6) % 7;
+        start.setDate(selected.getDate() - day);
+        end = new Date(start);
+        end.setDate(start.getDate() + 6);
+      } else if (period === "monthly") {
+        start = new Date(selected.getFullYear(), selected.getMonth(), 1);
+        end = new Date(selected.getFullYear(), selected.getMonth() + 1, 0);
+      }
+
+      const dateText = (value: Date) =>
+        `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
+
+      const startText = dateText(start);
+      const endText = dateText(end);
+
+      const filtered = sourceRecords
+        .filter(
+          (record) =>
+            record.record_date >= startText &&
+            record.record_date <= endText
+        )
+        .sort(
+          (a, b) =>
+            a.record_date.localeCompare(b.record_date) ||
+            a.transaction_no.localeCompare(b.transaction_no)
+        );
+
+      type ExportRow = Record<string, string | number>;
+
+      const summaryRows: ExportRow[] = filtered.map((record) => ({
+        "Transaction No.": formatTransactionNo(record.transaction_no),
+        Date: formatExcelDate(record.record_date),
+        Payee: record.payee,
+        "Employee Name": record.employee_name || "",
+        "Receipt No.": record.receipt_no || "",
+        "Project Location": record.locations?.name || "",
+        "Project Address": record.address || "",
+        Destination: destinationLabel(record.destination),
+        Remarks: record.remarks || "",
+        "Total Amount": getRecordTotal(record),
+        "Item Count": (record.daily_record_items || []).length,
+      }));
+
+      const detailRows: ExportRow[] = filtered.flatMap((record) => {
+        const orderedItems = [...(record.daily_record_items || [])].sort(
+          (a, b) => Number(a.item_order) - Number(b.item_order)
+        );
+
+        return orderedItems.map((item) => ({
+          "Transaction No.": formatTransactionNo(record.transaction_no),
+          Date: formatExcelDate(record.record_date),
+          Payee: record.payee,
+          "Employee Name": record.employee_name || "",
+          "Receipt No.": record.receipt_no || "",
+          "Project Location": record.locations?.name || "",
+          "Project Address": record.address || "",
+          Destination: destinationLabel(record.destination),
+          "Item Description": item.description,
+          Amount: Number(item.amount),
+          Remarks: record.remarks || "",
+        }));
+      });
+
+      const summaryTotal = filtered.reduce(
+        (sum, record) => sum + getRecordTotal(record),
+        0
+      );
+
+      const detailTotal = detailRows.reduce(
+        (sum, row) => sum + Number(row.Amount || 0),
+        0
+      );
+
+      const summaryOutput: ExportRow[] = summaryRows.length
+        ? [
+            ...summaryRows,
+            {
+              "Transaction No.": "",
+              Date: "",
+              Payee: "",
+              "Employee Name": "",
+              "Receipt No.": "",
+              "Project Location": "",
+              "Project Address": "",
+              Destination: "",
+              Remarks: "OVERALL TOTAL",
+              "Total Amount": Number(summaryTotal.toFixed(2)),
+              "Item Count": filtered.reduce(
+                (sum, record) =>
+                  sum + (record.daily_record_items || []).length,
+                0
+              ),
+            },
+          ]
+        : [
+            {
+              "Transaction No.": "",
+              Date: "",
+              Payee: "",
+              "Employee Name": "",
+              "Receipt No.": "",
+              "Project Location": "",
+              "Project Address": "",
+              Destination: "",
+              Remarks: "NO RECORDS",
+              "Total Amount": 0,
+              "Item Count": 0,
+            },
+          ];
+
+      const detailOutput: ExportRow[] = detailRows.length
+        ? [
+            ...detailRows,
+            {
+              "Transaction No.": "",
+              Date: "",
+              Payee: "",
+              "Employee Name": "",
+              "Receipt No.": "",
+              "Project Location": "",
+              "Project Address": "",
+              Destination: "",
+              "Item Description": "OVERALL TOTAL",
+              Amount: Number(detailTotal.toFixed(2)),
+              Remarks: "",
+            },
+          ]
+        : [
+            {
+              "Transaction No.": "",
+              Date: "",
+              Payee: "",
+              "Employee Name": "",
+              "Receipt No.": "",
+              "Project Location": "",
+              "Project Address": "",
+              Destination: "",
+              "Item Description": "NO RECORDS",
+              Amount: 0,
+              Remarks: "",
+            },
+          ];
+
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "DCYES Finance Management System";
+      workbook.title = "Daily Records Report";
+      workbook.subject = "Daily Records Excel Report";
+      workbook.created = new Date();
+
+      const navy = "17365D";
+      const darkNavy = "10243A";
+      const paleBlue = "F1F5F9";
+      const white = "FFFFFF";
+      const borderColor = "D5DDE7";
+
+      function buildReportSheet(
+        sheetName: string,
+        headers: string[],
+        rows: ExportRow[],
+        dataCount: number,
+        totalColumn: string,
+        widths: number[]
+      ) {
+        const sheet = workbook.addWorksheet(sheetName);
+
+        sheet.columns = headers.map((header, index) => ({
+          header,
+          key: `col${index + 1}`,
+          width: widths[index] ?? 18,
+        }));
+
+        // Report title
+        sheet.mergeCells(1, 1, 1, headers.length);
+        const titleCell = sheet.getCell(1, 1);
+        titleCell.value = "DCYES FINANCE MANAGEMENT SYSTEM";
+        titleCell.font = {
+          name: "Aptos Display",
+          size: 16,
+          bold: true,
+          color: { argb: white },
+        };
+        titleCell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: darkNavy },
+        };
+        titleCell.alignment = {
+          horizontal: "center",
+          vertical: "middle",
+        };
+        sheet.getRow(1).height = 34;
+
+        // Report subtitle
+        sheet.mergeCells(2, 1, 2, headers.length);
+        const subtitle = sheet.getCell(2, 1);
+        subtitle.value = `${period.toUpperCase()} DAILY RECORDS — ${sheetName.toUpperCase()}`;
+        subtitle.font = {
+          name: "Aptos",
+          size: 12,
+          bold: true,
+          color: { argb: navy },
+        };
+        subtitle.alignment = {
+          horizontal: "center",
+          vertical: "middle",
+        };
+        sheet.getRow(2).height = 25;
+
+        // Report period
+        sheet.mergeCells(3, 1, 3, headers.length);
+        const periodCell = sheet.getCell(3, 1);
+        periodCell.value = `Period: ${startText} to ${endText}  |  Generated: ${new Date().toLocaleString("en-PH")}`;
+        periodCell.font = {
+          name: "Aptos",
+          size: 9,
+          italic: true,
+          color: { argb: "64748B" },
+        };
+        periodCell.alignment = {
+          horizontal: "center",
+          vertical: "middle",
+        };
+        sheet.getRow(3).height = 22;
+        sheet.getRow(4).height = 8;
+
+        // Column headings are on row 5.
+        const headerRow = sheet.getRow(5);
+        headers.forEach((header, index) => {
+          headerRow.getCell(index + 1).value = header;
+        });
+
+        headerRow.height = 34;
+        headerRow.eachCell((cell) => {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: navy },
+          };
+          cell.font = {
+            name: "Aptos",
+            size: 10,
+            bold: true,
+            color: { argb: white },
+          };
+          cell.alignment = {
+            horizontal: "center",
+            vertical: "middle",
+            wrapText: true,
+          };
+          cell.border = {
+            top: { style: "thin", color: { argb: darkNavy } },
+            bottom: { style: "medium", color: { argb: darkNavy } },
+            left: { style: "thin", color: { argb: borderColor } },
+            right: { style: "thin", color: { argb: borderColor } },
+          };
+        });
+
+        rows.forEach((record, index) => {
+          const row = sheet.addRow(
+            headers.map((header) => record[header] ?? "")
+          );
+
+          const isTotal = record[totalColumn] === "OVERALL TOTAL";
+          const isEmpty = record[totalColumn] === "NO RECORDS";
+
+          row.height = 25;
+
+          row.eachCell((cell, columnIndex) => {
+            const header = headers[columnIndex - 1];
+
+            cell.fill = {
+              type: "pattern",
+              pattern: "solid",
+              fgColor: {
+                argb: isTotal
+                  ? navy
+                  : index % 2 === 0
+                    ? white
+                    : paleBlue,
+              },
+            };
+
+            cell.font = {
+              name: "Aptos",
+              size: 10,
+              bold: isTotal,
+              color: {
+                argb: isTotal ? white : isEmpty ? "C00000" : "263445",
+              },
+            };
+
+            cell.alignment = {
+              vertical: "middle",
+              horizontal:
+                header === "Amount" || header === "Total Amount"
+                  ? "right"
+                  : "left",
+              wrapText: true,
+            };
+
+            cell.border = {
+              bottom: { style: "thin", color: { argb: borderColor } },
+              left: { style: "thin", color: { argb: borderColor } },
+              right: { style: "thin", color: { argb: borderColor } },
+            };
+
+            if (header === "Amount" || header === "Total Amount") {
+              cell.numFmt = '"₱"#,##0.00';
+            }
+
+            if (header === "Item Count") {
+              cell.numFmt = "#,##0";
+              cell.alignment = {
+                horizontal: "center",
+                vertical: "middle",
+              };
+            }
+          });
+        });
+
+        if (dataCount > 0) {
+          sheet.autoFilter = {
+            from: { row: 5, column: 1 },
+            to: { row: 5 + dataCount, column: headers.length },
+          };
+        }
+
+        sheet.views = [
+          {
+            state: "frozen",
+            ySplit: 5,
+            topLeftCell: "A6",
+          },
+        ];
+
+        sheet.pageSetup = {
+          paperSize: 9,
+          orientation: "landscape",
+          fitToPage: true,
+          fitToWidth: 1,
+          fitToHeight: 0,
+          horizontalCentered: true,
+          margins: {
+            left: 0.25,
+            right: 0.25,
+            top: 0.5,
+            bottom: 0.5,
+            header: 0.2,
+            footer: 0.2,
+          },
+        };
+
+        sheet.pageSetup.printTitlesRow = "1:5";
+        sheet.pageSetup.printArea = `A1:${headers.length === 11 ? "K" : "A"}${5 + rows.length}`;
+        sheet.headerFooter.oddFooter =
+          "&LDCYES Finance Management System&CPage &P of &N&RConfidential";
+
+        return sheet;
+      }
+
+      const summaryHeaders = [
+        "Transaction No.",
+        "Date",
+        "Payee",
+        "Employee Name",
+        "Receipt No.",
+        "Project Location",
+        "Project Address",
+        "Destination",
+        "Remarks",
+        "Total Amount",
+        "Item Count",
+      ];
+
+      const detailHeaders = [
+        "Transaction No.",
+        "Date",
+        "Payee",
+        "Employee Name",
+        "Receipt No.",
+        "Project Location",
+        "Project Address",
+        "Destination",
+        "Item Description",
+        "Amount",
+        "Remarks",
+      ];
+
+      buildReportSheet(
+        "Transaction Summary",
+        summaryHeaders,
+        summaryOutput,
+        summaryRows.length,
+        "Remarks",
+        [22, 14, 24, 24, 18, 28, 36, 24, 32, 18, 12]
+      );
+
+      buildReportSheet(
+        "Complete Item Details",
+        detailHeaders,
+        detailOutput,
+        detailRows.length,
+        "Item Description",
+        [22, 14, 24, 24, 18, 28, 36, 24, 42, 18, 32]
+      );
+
+      const periodName = period[0].toUpperCase() + period.slice(1);
+      const filename =
+        `Daily-Records-${periodName}-${startText}-to-${endText}.xlsx`;
+
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([new Uint8Array(buffer)], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      setSaveMessage(
+        `Exported ${filtered.length} transaction(s) for ${period.toLowerCase()} report (${startText} to ${endText}).`
+      );
+      setSaveMessageType("success");
+    } catch (error) {
+      console.error("Daily Records Excel export failed:", error);
+      setSaveMessage(
+        "Excel export failed. Please check the browser console and try again."
+      );
+      setSaveMessageType("error");
+    }
+  }
+

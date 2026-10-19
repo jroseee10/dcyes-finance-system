@@ -1,0 +1,1536 @@
+﻿
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
+import * as XLSX from "xlsx";
+
+type Location = {
+  id: number;
+  name: string;
+  address: string | null;
+};
+
+type CurrentProfile = {
+  id: number;
+  name: string;
+  email: string;
+  position: string;
+  status: string;
+};
+
+type FormItem = {
+  key: string;
+  id?: number;
+  description: string;
+  amount: string;
+};
+
+type SavedItem = {
+  id: number;
+  description: string;
+  amount: number;
+  item_order: number;
+};
+
+type DailyRecord = {
+  id: number;
+  transaction_no: string;
+  record_date: string;
+  payee: string;
+  employee_name: string | null;
+  receipt_no: string | null;
+  address: string | null;
+  remarks: string | null;
+  location_id: number;
+  destination: string;
+  created_at: string;
+  locations?: { name: string } | null;
+  daily_record_items?: SavedItem[];
+};
+
+type SaveResponse = {
+  success?: boolean;
+  error?: string;
+  record?: { id: number; transaction_no: string };
+};
+
+type UploadState = {
+  busy: boolean;
+  message: string;
+  error: boolean;
+};
+
+const DESTINATIONS = [
+  { value: "expenses", label: "Expenses" },
+  { value: "liquidation", label: "Liquidation" },
+  { value: "telegraphic_transfer", label: "Telegraphic Transfer" },
+  { value: "deposit_slips", label: "Deposit Slips" },
+];
+
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const ALLOWED_TYPES = [
+  "application/pdf",
+  "image/jpeg",
+  "image/png",
+];
+
+function createSubmissionKey() {
+  return globalThis.crypto.randomUUID();
+}
+
+function createItem(): FormItem {
+  return {
+    key:
+      globalThis.crypto?.randomUUID?.() ||
+      `${Date.now()}-${Math.random()}`,
+    description: "",
+    amount: "",
+  };
+}
+
+function getManilaDate() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Manila",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const values = Object.fromEntries(
+    parts.map((part) => [part.type, part.value])
+  );
+
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value || 0);
+}
+
+function formatDate(value: string) {
+  if (!value) return "-";
+
+  return new Intl.DateTimeFormat("en-PH", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(`${value}T00:00:00`));
+}
+
+function destinationLabel(value: string) {
+  return DESTINATIONS.find((item) => item.value === value)?.label || value;
+}
+
+export default function DailyRecordsPage() {
+  const [profile, setProfile] = useState<CurrentProfile | null>(null);
+  const [locations, setLocations] = useState<Location[]>([]);
+  const [records, setRecords] = useState<DailyRecord[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingProfile, setLoadingProfile] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [editingRecordId, setEditingRecordId] = useState<number | null>(null);
+  const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null);
+  const [reportPeriod, setReportPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
+  const [reportDate, setReportDate] = useState(getManilaDate());
+
+  const [saveMessage, setSaveMessage] = useState("");
+  const [saveMessageType, setSaveMessageType] =
+    useState<"success" | "error" | "info">("info");
+
+  const [submissionKey, setSubmissionKey] = useState(createSubmissionKey);
+  const [date, setDate] = useState(getManilaDate());
+  const [payee, setPayee] = useState("");
+  const [employeeName, setEmployeeName] = useState("");
+  const [receiptNo, setReceiptNo] = useState("");
+  const [locationId, setLocationId] = useState("");
+  const [address, setAddress] = useState("");
+  const [destination, setDestination] = useState("expenses");
+  const [remarks, setRemarks] = useState("");
+  const [items, setItems] = useState<FormItem[]>([createItem()]);
+
+  // Attachments selected before saving the record.
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [uploadStates, setUploadStates] = useState<
+    Record<number, UploadState>
+  >({});
+
+  const fileInputs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  const isAdmin =
+    String(profile?.position || "").trim().toLowerCase() === "admin" &&
+    String(profile?.status || "").trim().toLowerCase() === "active";
+
+  const total = useMemo(
+    () =>
+      items.reduce((sum, item) => {
+        const amount = Number(item.amount);
+        return sum + (Number.isFinite(amount) ? amount : 0);
+      }, 0),
+    [items]
+  );
+
+  useEffect(() => {
+    if (!locationId) {
+      setAddress("");
+      return;
+    }
+
+    const selectedLocation = locations.find(
+      (location) => String(location.id) === locationId
+    );
+
+    if (selectedLocation) {
+      setAddress(selectedLocation.address || "");
+    }
+  }, [locationId, locations]);
+
+  async function loadProfile() {
+    setLoadingProfile(true);
+
+    try {
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
+
+      if (authError || !authData.user?.email) {
+        setProfile(null);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from("users")
+        .select("id, name, email, position, status")
+        .eq("email", authData.user.email)
+        .maybeSingle();
+
+      if (error) {
+        console.error("Daily Records profile error:", error);
+        setProfile(null);
+        return;
+      }
+
+      setProfile((data || null) as CurrentProfile | null);
+    } catch (error) {
+      console.error("Daily Records profile error:", error);
+      setProfile(null);
+    } finally {
+      setLoadingProfile(false);
+    }
+  }
+
+  async function loadLocations() {
+    try {
+      const { data, error } = await supabase
+        .from("locations")
+        .select("id, name, address")
+        .order("name", { ascending: true });
+
+      if (error) {
+        console.error("Daily Records locations error:", error);
+        setLocations([]);
+        return;
+      }
+
+      setLocations((data || []) as Location[]);
+    } catch (error) {
+      console.error("Daily Records locations error:", error);
+      setLocations([]);
+    }
+  }
+
+  async function loadRecords() {
+    setLoading(true);
+
+    try {
+      const { data, error } = await supabase
+        .from("daily_records")
+        .select(`
+          id,
+          transaction_no,
+          record_date,
+          payee,
+          employee_name,
+          receipt_no,
+          address,
+          remarks,
+          location_id,
+          destination,
+          created_at,
+          locations ( name ),
+          daily_record_items (
+            id,
+            description,
+            amount,
+            item_order
+          )
+        `)
+        .order("record_date", { ascending: false })
+        .order("id", { ascending: false });
+
+      if (error) {
+        console.error("Daily Records load error:", error);
+        setRecords([]);
+        return;
+      }
+
+      setRecords((data || []) as unknown as DailyRecord[]);
+    } catch (error) {
+      console.error("Daily Records load error:", error);
+      setRecords([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadProfile();
+    void loadLocations();
+    void loadRecords();
+  }, []);
+
+  function addPendingFiles(fileList: FileList | null) {
+    if (!fileList) return;
+
+    const incoming = Array.from(fileList);
+    const accepted: File[] = [];
+    const errors: string[] = [];
+
+    for (const file of incoming) {
+      if (!ALLOWED_TYPES.includes(file.type)) {
+        errors.push(`${file.name}: PDF, JPG, or PNG files only.`);
+        continue;
+      }
+
+      if (file.size <= 0 || file.size > MAX_FILE_SIZE) {
+        errors.push(`${file.name}: file must be no larger than 10 MB.`);
+        continue;
+      }
+
+      accepted.push(file);
+    }
+
+    setPendingFiles((current) => {
+      const combined = [...current];
+
+      for (const file of accepted) {
+        const duplicate = combined.some(
+          (existing) =>
+            existing.name === file.name &&
+            existing.size === file.size &&
+            existing.lastModified === file.lastModified
+        );
+
+        if (!duplicate) combined.push(file);
+      }
+
+      if (combined.length > 10) {
+        errors.push("You can attach a maximum of 10 files per record.");
+        return combined.slice(0, 10);
+      }
+
+      return combined;
+    });
+
+    if (errors.length) {
+      setSaveMessage(errors.join(" "));
+      setSaveMessageType("error");
+    } else {
+      setSaveMessage("");
+      setSaveMessageType("info");
+    }
+
+    // Allow selecting the same file again after removing it.
+    if (photoInputRef.current) photoInputRef.current.value = "";
+    if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+  }
+
+  function removePendingFile(index: number) {
+    setPendingFiles((current) =>
+      current.filter((_, fileIndex) => fileIndex !== index)
+    );
+  }
+
+  function clearForm() {
+    if (saving) return;
+
+    setEditingRecordId(null);
+    setDate(getManilaDate());
+    setPayee("");
+    setEmployeeName("");
+    setReceiptNo("");
+    setLocationId("");
+    setAddress("");
+    setDestination("expenses");
+    setRemarks("");
+    setItems([createItem()]);
+    setPendingFiles([]);
+    setSubmissionKey(createSubmissionKey());
+    setSaveMessage("");
+    setSaveMessageType("info");
+
+    if (photoInputRef.current) photoInputRef.current.value = "";
+    if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+  }
+
+  function updateItem(
+    key: string,
+    field: "description" | "amount",
+    value: string
+  ) {
+    setItems((current) =>
+      current.map((item) =>
+        item.key === key ? { ...item, [field]: value } : item
+      )
+    );
+  }
+
+  function addItem() {
+    if (items.length >= 100) {
+      setSaveMessage("Maximum 100 items per record.");
+      setSaveMessageType("error");
+      return;
+    }
+
+    setItems((current) => [...current, createItem()]);
+    setSaveMessage("");
+  }
+
+  function removeItem(key: string) {
+    setItems((current) =>
+      current.length <= 1
+        ? current
+        : current.filter((item) => item.key !== key)
+    );
+    setSaveMessage("");
+  }
+
+  function getRecordTotal(record: DailyRecord) {
+    return (record.daily_record_items || []).reduce(
+      (sum, item) => sum + Number(item.amount || 0),
+      0
+    );
+  }
+
+  async function handleSave() {
+    if (saving) return;
+
+    setSaveMessage("");
+    setSaveMessageType("info");
+
+    if (loadingProfile) {
+      setSaveMessage("Please wait while your Admin profile is verified.");
+      return;
+    }
+
+    if (!isAdmin) {
+      setSaveMessage("An active Admin account is required to save records.");
+      setSaveMessageType("error");
+      return;
+    }
+
+    if (!date || !payee.trim() || !locationId) {
+      setSaveMessage(
+        "Please complete the date, payee, and project location."
+      );
+      setSaveMessageType("error");
+      return;
+    }
+
+    if (address.length > 2000) {
+      setSaveMessage("Address must not exceed 2,000 characters.");
+      setSaveMessageType("error");
+      return;
+    }
+
+    if (!DESTINATIONS.some((item) => item.value === destination)) {
+      setSaveMessage("Please select a valid destination.");
+      setSaveMessageType("error");
+      return;
+    }
+
+    if (
+      items.length === 0 ||
+      items.length > 100 ||
+      items.some(
+        (item) =>
+          !item.description.trim() ||
+          item.amount.trim() === "" ||
+          !Number.isFinite(Number(item.amount)) ||
+          Number(item.amount) <= 0
+      )
+    ) {
+      setSaveMessage(
+        "Each item needs a description and an amount greater than zero. Maximum 100 items per record."
+      );
+      setSaveMessageType("error");
+      return;
+    }
+
+    setSaving(true);
+
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session?.access_token) {
+        setSaveMessage(
+          "Your login session is unavailable. Please log in again."
+        );
+        setSaveMessageType("error");
+        return;
+      }
+
+      const response = await fetch("/api/admin/daily-records", {
+        method: editingRecordId ? "PATCH" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          ...(editingRecordId ? { id: editingRecordId } : { submission_key: submissionKey }),
+          record_date: date,
+          payee: payee.trim(),
+          employee_name: employeeName.trim(),
+          receipt_no: receiptNo.trim(),
+          address: address.trim(),
+          remarks: remarks.trim(),
+          location_id: Number(locationId),
+          destination,
+          items: items.map((item) => ({
+            ...(item.id ? { id: item.id } : {}),
+            description: item.description.trim(),
+            amount: Number(item.amount),
+          })),
+        }),
+      });
+
+      const result = (await response.json()) as SaveResponse;
+
+      if (!response.ok || !result.success || !result.record) {
+        setSaveMessage(result.error || "Unable to save the Daily Record.");
+        setSaveMessageType("error");
+        return;
+      }
+
+      const savedRecord = result.record;
+      const filesToUpload = [...pendingFiles];
+      let uploadedCount = 0;
+      const uploadErrors: string[] = [];
+
+      // Upload selected attachments to the existing protected API.
+      for (const file of filesToUpload) {
+        try {
+          const formData = new FormData();
+          formData.append("daily_record_id", String(savedRecord.id));
+          formData.append("file", file);
+
+          const uploadResponse = await fetch(
+            "/api/admin/daily-record-attachments",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${session.access_token}`,
+              },
+              body: formData,
+            }
+          );
+
+          const uploadResult = (await uploadResponse.json()) as {
+            success?: boolean;
+            error?: string;
+          };
+
+          if (!uploadResponse.ok || !uploadResult.success) {
+            uploadErrors.push(
+              `${file.name}: ${uploadResult.error || "Upload failed."}`
+            );
+          } else {
+            uploadedCount += 1;
+          }
+        } catch (uploadError) {
+          console.error("Attachment upload error:", uploadError);
+          uploadErrors.push(`${file.name}: Upload failed.`);
+        }
+      }
+
+      await loadRecords();
+
+      setEditingRecordId(null);
+      setDate(getManilaDate());
+      setPayee("");
+      setEmployeeName("");
+      setReceiptNo("");
+      setLocationId("");
+      setAddress("");
+      setDestination("expenses");
+      setRemarks("");
+      setItems([createItem()]);
+      setSubmissionKey(createSubmissionKey());
+      setPendingFiles([]);
+
+      if (photoInputRef.current) photoInputRef.current.value = "";
+      if (attachmentInputRef.current) attachmentInputRef.current.value = "";
+
+      if (uploadErrors.length > 0) {
+        setSaveMessage(
+          `Daily Record ${savedRecord.transaction_no} was ${editingRecordId ? "updated" : "saved"}. ` +
+            `${uploadedCount} of ${filesToUpload.length} attachment(s) uploaded. ` +
+            `Failed: ${uploadErrors.join(" ")} ` +
+            "Use the Receipt / Proof column below to retry failed uploads."
+        );
+        setSaveMessageType("error");
+      } else {
+        setSaveMessage(
+          filesToUpload.length > 0
+            ? `Daily Record ${savedRecord.transaction_no} ${editingRecordId ? "updated" : "saved"} successfully. All ${uploadedCount} attachment(s) uploaded.`
+            : `Daily Record ${savedRecord.transaction_no} ${editingRecordId ? "updated" : "saved"} successfully.`
+        );
+        setSaveMessageType("success");
+      }
+    } catch (error) {
+      console.error("Save Daily Record error:", error);
+      setSaveMessage(
+        "We could not confirm the result. Check the records list before retrying. Keep the same form values if retrying."
+      );
+      setSaveMessageType("error");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+
+  function beginEdit(record: DailyRecord) {
+    if (!isAdmin) {
+      setSaveMessage("An active Admin account is required to edit records.");
+      setSaveMessageType("error");
+      return;
+    }
+
+    setEditingRecordId(record.id);
+    setDate(record.record_date);
+    setPayee(record.payee || "");
+    setEmployeeName(record.employee_name || "");
+    setReceiptNo(record.receipt_no || "");
+    setLocationId(String(record.location_id));
+    setAddress(record.address || "");
+    setDestination(record.destination || "expenses");
+    setRemarks(record.remarks || "");
+    const ordered = [...(record.daily_record_items || [])].sort(
+      (a, b) => Number(a.item_order) - Number(b.item_order)
+    );
+    setItems(
+      ordered.length
+        ? ordered.map((item) => ({
+            key: `existing-${item.id}`,
+            id: item.id,
+            description: item.description || "",
+            amount: String(item.amount ?? ""),
+          }))
+        : [createItem()]
+    );
+    setPendingFiles([]);
+    setSubmissionKey(createSubmissionKey());
+    setSaveMessage(`Editing ${record.transaction_no}. Save changes using Update Daily Record.`);
+    setSaveMessageType("info");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function deleteRecord(record: DailyRecord) {
+    if (!isAdmin || deletingRecordId !== null) return;
+
+    const confirmed = window.confirm(
+      `Delete Daily Record ${record.transaction_no} for ${record.payee}?\n\nIts receipt attachments will also be removed from the Receipt / Proof Gallery. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setDeletingRecordId(record.id);
+    setSaveMessage("");
+    try {
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session?.access_token) {
+        throw new Error("Your login session is unavailable. Please log in again.");
+      }
+
+      const response = await fetch("/api/admin/daily-records", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ id: record.id }),
+      });
+      const result = (await response.json()) as { success?: boolean; error?: string };
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Unable to delete this Daily Record.");
+      }
+
+      await loadRecords();
+      setSaveMessage(`Daily Record ${record.transaction_no} was deleted.`);
+      setSaveMessageType("success");
+      if (editingRecordId === record.id) clearForm();
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? error.message : "Unable to delete this Daily Record.");
+      setSaveMessageType("error");
+    } finally {
+      setDeletingRecordId(null);
+    }
+  }
+
+  function formatExcelDate(value: string) {
+    const date = new Date(`${value.slice(0, 10)}T00:00:00`);
+    if (Number.isNaN(date.getTime())) return value;
+    const month = date.toLocaleString("en-US", { month: "short" }).toUpperCase();
+    return `${month}-${String(date.getDate()).padStart(2, "0")}-${date.getFullYear()}`;
+  }
+
+  function formatTransactionNo(value: string) {
+    const text = String(value || "");
+    return /^\\d+$/.test(text) ? text.padStart(4, "0") : text;
+  }
+
+  function exportReport(
+    sourceRecords: DailyRecord[],
+    period: "daily" | "weekly" | "monthly",
+    referenceDate: string
+  ) {
+    if (!referenceDate) {
+      setSaveMessage("Choose a date for the report.");
+      setSaveMessageType("error");
+      return;
+    }
+
+    const selected = new Date(`${referenceDate.slice(0, 10)}T00:00:00`);
+    let start = new Date(selected);
+    let end = new Date(selected);
+
+    if (period === "weekly") {
+      const day = (selected.getDay() + 6) % 7;
+      start.setDate(selected.getDate() - day);
+      end = new Date(start);
+      end.setDate(start.getDate() + 6);
+    } else if (period === "monthly") {
+      start = new Date(selected.getFullYear(), selected.getMonth(), 1);
+      end = new Date(selected.getFullYear(), selected.getMonth() + 1, 0);
+    }
+
+    const startText = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+    const endText = `${end.getFullYear()}-${String(end.getMonth() + 1).padStart(2, "0")}-${String(end.getDate()).padStart(2, "0")}`;
+    const filtered = sourceRecords
+      .filter((record) => record.record_date >= startText && record.record_date <= endText)
+      .sort((a, b) => a.record_date.localeCompare(b.record_date) || a.transaction_no.localeCompare(b.transaction_no));
+
+    const summaryRows = filtered.map((record) => ({
+      "Transaction No.": formatTransactionNo(record.transaction_no),
+      Date: formatExcelDate(record.record_date),
+      Payee: record.payee,
+      "Employee Name": record.employee_name || "",
+      "Receipt No.": record.receipt_no || "",
+      "Project Location": record.locations?.name || "",
+      "Project Address": record.address || "",
+      Destination: destinationLabel(record.destination),
+      Remarks: record.remarks || "",
+      "Total Amount": getRecordTotal(record),
+      "Item Count": (record.daily_record_items || []).length,
+    }));
+
+    const detailRows = filtered.flatMap((record) => {
+      const recordItems = [...(record.daily_record_items || [])].sort(
+        (a, b) => Number(a.item_order) - Number(b.item_order)
+      );
+      return recordItems.map((item) => ({
+        "Transaction No.": formatTransactionNo(record.transaction_no),
+        Date: formatExcelDate(record.record_date),
+        Payee: record.payee,
+        "Employee Name": record.employee_name || "",
+        "Receipt No.": record.receipt_no || "",
+        "Project Location": record.locations?.name || "",
+        "Project Address": record.address || "",
+        Destination: destinationLabel(record.destination),
+        "Item Description": item.description,
+        Amount: Number(item.amount),
+        Remarks: record.remarks || "",
+      }));
+    });
+
+    const workbook = XLSX.utils.book_new();
+    const summaryTotal = filtered.reduce((sum, record) => sum + getRecordTotal(record), 0);
+    const detailTotal = detailRows.reduce((sum, row) => sum + Number(row.Amount || 0), 0);
+    const summaryOutput = summaryRows.length ? [
+      ...summaryRows,
+      {
+        "Transaction No.": "",
+        Date: "",
+        Payee: "",
+        "Employee Name": "",
+        "Receipt No.": "",
+        "Project Location": "",
+        "Project Address": "",
+        Destination: "",
+        Remarks: "OVERALL TOTAL",
+        "Total Amount": Number(summaryTotal.toFixed(2)),
+        "Item Count": filtered.reduce((sum, record) => sum + (record.daily_record_items || []).length, 0),
+      },
+    ] : [{
+      "Transaction No.": "", Date: "", Payee: "", "Employee Name": "",
+      "Receipt No.": "", "Project Location": "", "Project Address": "",
+      Destination: "", Remarks: "NO RECORDS", "Total Amount": 0, "Item Count": 0,
+    }];
+    const detailOutput = detailRows.length ? [
+      ...detailRows,
+      {
+        "Transaction No.": "",
+        Date: "",
+        Payee: "",
+        "Employee Name": "",
+        "Receipt No.": "",
+        "Project Location": "",
+        "Project Address": "",
+        Destination: "",
+        "Item Description": "OVERALL TOTAL",
+        Amount: Number(detailTotal.toFixed(2)),
+        Remarks: "",
+      },
+    ] : [{
+      "Transaction No.": "", Date: "", Payee: "", "Employee Name": "",
+      "Receipt No.": "", "Project Location": "", "Project Address": "",
+      Destination: "", "Item Description": "NO RECORDS", Amount: 0, Remarks: "",
+    }];
+    const summarySheet = XLSX.utils.json_to_sheet(summaryOutput);
+    const detailsSheet = XLSX.utils.json_to_sheet(detailOutput);
+    summarySheet["!autofilter"] = { ref: `A1:K${Math.max(1, summaryRows.length + 1)}` };
+    detailsSheet["!autofilter"] = { ref: `A1:K${Math.max(1, detailRows.length + 1)}` };
+    summarySheet["!cols"] = [
+      { wch: 22 }, { wch: 14 }, { wch: 24 }, { wch: 24 }, { wch: 18 },
+      { wch: 28 }, { wch: 36 }, { wch: 24 }, { wch: 32 }, { wch: 16 }, { wch: 12 },
+    ];
+    detailsSheet["!cols"] = [
+      { wch: 22 }, { wch: 14 }, { wch: 24 }, { wch: 24 }, { wch: 18 },
+      { wch: 28 }, { wch: 36 }, { wch: 24 }, { wch: 42 }, { wch: 16 }, { wch: 32 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, summarySheet, "Transaction Summary");
+    XLSX.utils.book_append_sheet(workbook, detailsSheet, "Complete Item Details");
+    const periodName = period[0].toUpperCase() + period.slice(1);
+    XLSX.writeFile(workbook, `Daily-Records-${periodName}-${startText}-to-${endText}.xlsx`);
+    setSaveMessage(
+      `Exported ${filtered.length} transaction(s) for ${periodName.toLowerCase()} report (${startText} to ${endText}).`
+    );
+    setSaveMessageType("success");
+  }
+
+  async function uploadReceipt(record: DailyRecord, file: File) {
+    if (!isAdmin) {
+      setUploadStates((current) => ({
+        ...current,
+        [record.id]: {
+          busy: false,
+          message: "Only an active Admin can upload attachments.",
+          error: true,
+        },
+      }));
+      return;
+    }
+
+    if (!ALLOWED_TYPES.includes(file.type)) {
+      setUploadStates((current) => ({
+        ...current,
+        [record.id]: {
+          busy: false,
+          message: "Only PDF, JPG, and PNG files are accepted.",
+          error: true,
+        },
+      }));
+      return;
+    }
+
+    if (file.size <= 0 || file.size > MAX_FILE_SIZE) {
+      setUploadStates((current) => ({
+        ...current,
+        [record.id]: {
+          busy: false,
+          message: "File must be greater than 0 and no larger than 10 MB.",
+          error: true,
+        },
+      }));
+      return;
+    }
+
+    setUploadStates((current) => ({
+      ...current,
+      [record.id]: {
+        busy: true,
+        message: "Uploading...",
+        error: false,
+      },
+    }));
+
+    try {
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session?.access_token) {
+        throw new Error("Login session expired. Please log in again.");
+      }
+
+      const formData = new FormData();
+      formData.append("daily_record_id", String(record.id));
+      formData.append("file", file);
+
+      const response = await fetch("/api/admin/daily-record-attachments", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
+      });
+
+      const result = (await response.json()) as {
+        success?: boolean;
+        error?: string;
+      };
+
+      if (!response.ok || !result.success) {
+        throw new Error(result.error || "Receipt upload failed.");
+      }
+
+      setUploadStates((current) => ({
+        ...current,
+        [record.id]: {
+          busy: false,
+          message: "Receipt uploaded successfully.",
+          error: false,
+        },
+      }));
+
+      if (fileInputs.current[record.id]) {
+        fileInputs.current[record.id]!.value = "";
+      }
+    } catch (error) {
+      console.error("Receipt upload error:", error);
+
+      setUploadStates((current) => ({
+        ...current,
+        [record.id]: {
+          busy: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Receipt upload failed.",
+          error: true,
+        },
+      }));
+    }
+  }
+
+  const inputClass =
+    "w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-slate-500 disabled:bg-slate-100";
+
+  return (
+    <div className="min-h-screen bg-slate-50 p-4 md:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">
+              Daily Records
+            </h1>
+            <p className="mt-2 text-sm text-slate-500">
+              Record and review daily financial transactions.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href="/dashboard"
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100"
+            >
+              ← Back to Dashboard
+            </a>
+          {!loadingProfile && (
+            <div
+              className={`rounded-full px-4 py-2 text-sm font-semibold ${
+                isAdmin
+                  ? "bg-blue-100 text-blue-700"
+                  : "bg-slate-200 text-slate-600"
+              }`}
+            >
+              {isAdmin ? "Admin controls" : "Read-only access"}
+            </div>
+          )}
+          </div>
+        </div>
+
+        {!loadingProfile && !isAdmin && (
+          <div className="mb-6 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+            You can review Daily Records. Creating records and uploading
+            attachments requires an active Admin account.
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+          <div className="xl:col-span-1">
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-xl font-bold text-slate-900">
+                {editingRecordId ? "Edit Daily Record" : "New Daily Record"}
+              </h2>
+              <p className="mb-6 mt-1 text-sm text-slate-500">
+                Transaction number is generated when the record is saved.
+              </p>
+
+              <div className="space-y-5">
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={date}
+                    disabled={saving}
+                    onChange={(e) => setDate(e.target.value)}
+                    className={inputClass}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Payee *
+                  </label>
+                  <input
+                    value={payee}
+                    disabled={saving}
+                    onChange={(e) => setPayee(e.target.value)}
+                    placeholder="Payee name"
+                    className={inputClass}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Project Location *
+                  </label>
+                  <select
+                    value={locationId}
+                    disabled={saving}
+                    onChange={(e) => setLocationId(e.target.value)}
+                    className={`${inputClass} bg-white`}
+                  >
+                    <option value="">Select location</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Project Address
+                  </label>
+                  <textarea
+                    value={address}
+                    disabled={saving}
+                    onChange={(e) => setAddress(e.target.value)}
+                    maxLength={2000}
+                    rows={3}
+                    placeholder="Select a location to load its default address, or enter an address."
+                    className={inputClass}
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    Auto-filled from the selected location. You can edit it
+                    for this record.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Employee Name
+                  </label>
+                  <input
+                    value={employeeName}
+                    disabled={saving}
+                    onChange={(e) => setEmployeeName(e.target.value)}
+                    placeholder="Employee name"
+                    className={inputClass}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Receipt No.
+                  </label>
+                  <input
+                    value={receiptNo}
+                    disabled={saving}
+                    onChange={(e) => setReceiptNo(e.target.value)}
+                    placeholder="Receipt number"
+                    className={inputClass}
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Destination *
+                  </label>
+                  <select
+                    value={destination}
+                    disabled={saving}
+                    onChange={(e) => setDestination(e.target.value)}
+                    className={`${inputClass} bg-white`}
+                  >
+                    {DESTINATIONS.map((item) => (
+                      <option key={item.value} value={item.value}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="mb-3 flex items-center justify-between">
+                    <label className="text-sm font-medium">Items *</label>
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={addItem}
+                      className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                    >
+                      + Add Item
+                    </button>
+                  </div>
+
+                  <div className="space-y-3">
+                    {items.map((item, index) => (
+                      <div
+                        key={item.key}
+                        className="rounded-xl border bg-slate-50 p-3"
+                      >
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-xs font-semibold uppercase text-slate-500">
+                            Item {index + 1}
+                          </span>
+                          {items.length > 1 && (
+                            <button
+                              type="button"
+                              disabled={saving}
+                              onClick={() => removeItem(item.key)}
+                              className="text-xs font-semibold text-red-600"
+                            >
+                              Remove
+                            </button>
+                          )}
+                        </div>
+
+                        <input
+                          value={item.description}
+                          disabled={saving}
+                          onChange={(e) =>
+                            updateItem(item.key, "description", e.target.value)
+                          }
+                          placeholder="Description"
+                          className={`${inputClass} mb-2 bg-white`}
+                        />
+
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="0.01"
+                          value={item.amount}
+                          disabled={saving}
+                          onChange={(e) =>
+                            updateItem(item.key, "amount", e.target.value)
+                          }
+                          placeholder="Amount"
+                          className={`${inputClass} bg-white text-right`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="rounded-xl bg-slate-900 p-4 text-white">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-slate-300">Overall Total</span>
+                    <span className="text-xl font-bold">
+                      {formatMoney(total)}
+                    </span>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="mb-2 block text-sm font-medium">
+                    Remarks
+                  </label>
+                  <textarea
+                    value={remarks}
+                    disabled={saving}
+                    onChange={(e) => setRemarks(e.target.value)}
+                    rows={3}
+                    placeholder="Remarks"
+                    className={inputClass}
+                  />
+                </div>
+
+                {/* Attachments selected before saving */}
+                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <h3 className="font-semibold text-slate-900">
+                    Receipt / Proof Attachments
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Attach up to 10 PDF, JPG, or PNG files. Maximum 10 MB
+                    per file. Attachments upload after the record is saved.
+                  </p>
+
+                  <input
+                    ref={photoInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,.jpg,.jpeg,.png"
+                    capture="environment"
+                    multiple
+                    disabled={saving || !isAdmin}
+                    className="hidden"
+                    onChange={(event) => addPendingFiles(event.target.files)}
+                  />
+
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                    multiple
+                    disabled={saving || !isAdmin}
+                    className="hidden"
+                    onChange={(event) => addPendingFiles(event.target.files)}
+                  />
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={saving || !isAdmin}
+                      onClick={() => photoInputRef.current?.click()}
+                      className="rounded-lg bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:opacity-50"
+                    >
+                      Take a Photo
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={saving || !isAdmin}
+                      onClick={() => attachmentInputRef.current?.click()}
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+                    >
+                      Attach File
+                    </button>
+                  </div>
+
+                  {pendingFiles.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                      <p className="text-sm font-semibold text-slate-700">
+                        Selected files ({pendingFiles.length}/10)
+                      </p>
+
+                      {pendingFiles.map((file, index) => (
+                        <div
+                          key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                          className="flex items-center justify-between gap-3 rounded-lg border bg-white p-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="break-all text-sm font-medium text-slate-800">
+                              {file.name}
+                            </p>
+                            <p className="text-xs text-slate-500">
+                              {(file.size / (1024 * 1024)).toFixed(2)} MB
+                            </p>
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={saving}
+                            onClick={() => removePendingFile(index)}
+                            className="shrink-0 text-sm font-semibold text-red-600 disabled:opacity-50"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {saveMessage && (
+                  <div
+                    role="status"
+                    aria-live="polite"
+                    className={`rounded-xl border p-4 text-sm ${
+                      saveMessageType === "success"
+                        ? "border-green-200 bg-green-50 text-green-800"
+                        : saveMessageType === "error"
+                          ? "border-red-200 bg-red-50 text-red-800"
+                          : "border-blue-200 bg-blue-50 text-blue-800"
+                    }`}
+                  >
+                    {saveMessage}
+                  </div>
+                )}
+
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saving || loadingProfile || !isAdmin}
+                    className="flex-1 rounded-lg bg-slate-900 px-4 py-3 font-semibold text-white disabled:bg-slate-300"
+                  >
+                    {saving ? (editingRecordId ? "Updating..." : "Saving...") : (editingRecordId ? "Update Daily Record" : "Save Daily Record")}
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={clearForm}
+                    disabled={saving}
+                    className="rounded-lg border px-4 py-3 font-semibold"
+                  >
+                    Clear
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="xl:col-span-2">
+            <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+              <div className="flex flex-col gap-3 border-b p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-xl font-bold">Daily Records</h2>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Actual records saved in the database.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-semibold text-slate-600">
+                    Report
+                    <select
+                      value={reportPeriod}
+                      onChange={(e) => setReportPeriod(e.target.value as "daily" | "weekly" | "monthly")}
+                      className="ml-2 rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm"
+                    >
+                      <option value="daily">Daily</option>
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                    </select>
+                  </label>
+                  <input
+                    type={reportPeriod === "monthly" ? "month" : "date"}
+                    value={reportPeriod === "monthly" ? reportDate.slice(0, 7) : reportDate}
+                    onChange={(e) => setReportDate(reportPeriod === "monthly" ? `${e.target.value}-01` : e.target.value)}
+                    className="rounded-lg border border-slate-300 px-2 py-2 text-sm"
+                    aria-label="Report date"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => exportReport(records, reportPeriod, reportDate)}
+                    className="rounded-lg bg-emerald-700 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-800"
+                  >
+                    Export Excel
+                  </button>
+                  <a
+                    href="/dashboard/receipt-gallery"
+                    className="rounded-lg bg-blue-700 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+                  >
+                    Receipt / Proof Gallery
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => void loadRecords()}
+                    disabled={loading}
+                    className="rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                  >
+                    {loading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[1450px] text-sm">
+                  <thead className="bg-slate-900 text-white">
+                    <tr>
+                      <th className="px-4 py-3 text-left">Transaction No.</th>
+                      <th className="px-4 py-3 text-left">Date</th>
+                      <th className="px-4 py-3 text-left">Payee</th>
+                      <th className="px-4 py-3 text-left">Description</th>
+                      <th className="px-4 py-3 text-right">Amount</th>
+                      <th className="px-4 py-3 text-left">Project Location</th>
+                      <th className="px-4 py-3 text-left">Project Address</th>
+                      <th className="px-4 py-3 text-left">Receipt No.</th>
+                      <th className="px-4 py-3 text-left">Employee Name</th>
+                      <th className="px-4 py-3 text-left">Destination</th>
+                      <th className="px-4 py-3 text-left">Remarks</th>
+                      <th className="px-4 py-3 text-left">Receipt / Proof</th>
+                      <th className="px-4 py-3 text-left">Actions</th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+                    {loading ? (
+                      <tr>
+                        <td colSpan={13} className="p-10 text-center text-slate-500">
+                          Loading Daily Records...
+                        </td>
+                      </tr>
+                    ) : records.length === 0 ? (
+                      <tr>
+                        <td colSpan={13} className="p-10 text-center text-slate-500">
+                          No Daily Records yet.
+                        </td>
+                      </tr>
+                    ) : (
+                      records.map((record) => {
+                        const recordItems = [
+                          ...(record.daily_record_items || []),
+                        ].sort(
+                          (a, b) =>
+                            Number(a.item_order) - Number(b.item_order)
+                        );
+
+                        const uploadState = uploadStates[record.id];
+
+                        return (
+                          <tr
+                            key={record.id}
+                            className="align-top hover:bg-slate-50"
+                          >
+                            <td className="px-4 py-4 font-bold">
+                              {record.transaction_no}
+                            </td>
+
+                            <td className="whitespace-nowrap px-4 py-4">
+                              {formatDate(record.record_date)}
+                            </td>
+
+                            <td className="px-4 py-4 font-semibold">
+                              {record.payee}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {recordItems.length ? (
+                                <div className="space-y-1">
+                                  {recordItems.map((item) => (
+                                    <div key={item.id}>
+                                      {item.description}
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                "-"
+                              )}
+                            </td>
+
+                            <td className="whitespace-nowrap px-4 py-4 text-right font-semibold">
+                              {formatMoney(getRecordTotal(record))}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {record.locations?.name || "-"}
+                            </td>
+
+                            <td className="max-w-[260px] whitespace-pre-wrap break-words px-4 py-4">
+                              {record.address || "-"}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {record.receipt_no || "-"}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              {record.employee_name || "-"}
+                            </td>
+
+                            <td className="px-4 py-4">
+                              <span className="inline-flex rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold">
+                                {destinationLabel(record.destination)}
+                              </span>
+                            </td>
+
+                            <td className="max-w-[220px] whitespace-pre-wrap px-4 py-4">
+                              {record.remarks || "-"}
+                            </td>
+
+                            <td className="min-w-[230px] px-4 py-4">
+                              <input
+                                ref={(element) => {
+                                  fileInputs.current[record.id] = element;
+                                }}
+                                type="file"
+                                accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                                disabled={!isAdmin || Boolean(uploadState?.busy)}
+                                className="block w-full text-xs file:mr-2 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:font-semibold"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0];
+                                  if (file) void uploadReceipt(record, file);
+                                }}
+                              />
+
+                              {uploadState?.message && (
+                                <p
+                                  role="status"
+                                  className={`mt-2 text-xs ${
+                                    uploadState.error
+                                      ? "text-red-600"
+                                      : "text-green-700"
+                                  }`}
+                                >
+                                  {uploadState.message}
+                                </p>
+                              )}
+
+                              <a
+                                href="/dashboard/receipt-gallery"
+                                className="mt-2 inline-block text-xs font-semibold text-blue-700 underline"
+                              >
+                                Open Gallery
+                              </a>
+                            </td>
+                            <td className="min-w-[150px] px-4 py-4">
+                              <div className="flex flex-col gap-2">
+                                <button
+                                  type="button"
+                                  disabled={!isAdmin || saving || deletingRecordId !== null}
+                                  onClick={() => beginEdit(record)}
+                                  className="rounded-md border border-blue-200 px-3 py-2 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={!isAdmin || saving || deletingRecordId !== null}
+                                  onClick={() => void deleteRecord(record)}
+                                  className="rounded-md border border-red-200 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50"
+                                >
+                                  {deletingRecordId === record.id ? "Deleting..." : "Delete"}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

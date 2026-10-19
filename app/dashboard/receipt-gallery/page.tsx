@@ -1,4 +1,4 @@
-﻿
+
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -8,6 +8,14 @@ import { supabase } from "@/lib/supabase";
 type LocationOption = {
   id: number | string;
   name: string;
+};
+
+type DailyRecordOption = {
+  id: number | string;
+  transaction_no?: string | null;
+  record_date?: string | null;
+  payee?: string | null;
+  location_id?: number | string | null;
 };
 
 type FileRecord = {
@@ -113,6 +121,9 @@ function formatBytes(bytes?: number | null) {
 export default function ReceiptGalleryPage() {
   const [items, setItems] = useState<GalleryItem[]>([]);
   const [locations, setLocations] = useState<LocationOption[]>([]);
+  const [dailyRecordOptions, setDailyRecordOptions] = useState<DailyRecordOption[]>([]);
+  const [selectedDailyRecordId, setSelectedDailyRecordId] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -238,6 +249,23 @@ export default function ReceiptGalleryPage() {
         []) as LocationOption[];
 
       setLocations(locationRows);
+
+      const { data: transactionRows, error: transactionError } =
+        await supabase
+          .from("daily_records")
+          .select("id, transaction_no, record_date, payee, location_id")
+          .order("record_date", { ascending: false })
+          .limit(500);
+
+      if (transactionError) {
+        throw new Error(
+          `Unable to load Daily Records: ${transactionError.message}`
+        );
+      }
+
+      setDailyRecordOptions(
+        (transactionRows ?? []) as DailyRecordOption[]
+      );
 
       const locationMap = new Map(
         locationRows.map((location) => [
@@ -389,30 +417,31 @@ export default function ReceiptGalleryPage() {
     setMessage("");
     setErrorMessage("");
 
-    if (!uploadLocation) {
+    if (!selectedDailyRecordId && !uploadLocation) {
       setErrorMessage("Please select a project location.");
       return;
     }
 
     if (!file) {
-      setErrorMessage("Please choose a receipt image or PDF.");
+      setErrorMessage("Please choose a receipt file.");
       return;
     }
 
-    const allowedTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/webp",
-      "application/pdf",
-    ];
+    const allowedTypes = selectedDailyRecordId
+      ? ["image/jpeg", "image/png", "application/pdf"]
+      : ["image/jpeg", "image/png", "image/webp"];
 
     if (!allowedTypes.includes(file.type)) {
-      setErrorMessage("Only JPG, PNG, WEBP, and PDF files are allowed.");
+      setErrorMessage(
+        selectedDailyRecordId
+          ? "Linked attachments support JPG, PNG, and PDF."
+          : "Standalone receipts support JPG, PNG, and WEBP."
+      );
       return;
     }
 
-    if (file.size > MAX_FILE_SIZE) {
-      setErrorMessage("The file must not exceed 10 MB.");
+    if (file.size <= 0 || file.size > MAX_FILE_SIZE) {
+      setErrorMessage("The file must be greater than 0 and no larger than 10 MB.");
       return;
     }
 
@@ -421,14 +450,22 @@ export default function ReceiptGalleryPage() {
     try {
       const token = await getToken();
       const formData = new FormData();
-
       formData.append("file", file);
-      formData.append("location_id", uploadLocation);
-      formData.append("receipt_date", receiptDate);
-      formData.append("description", description.trim());
-      formData.append("remarks", remarks.trim());
 
-      const response = await fetch("/api/admin/standalone-receipts", {
+      const endpoint = selectedDailyRecordId
+        ? "/api/admin/daily-record-attachments"
+        : "/api/admin/standalone-receipts";
+
+      if (selectedDailyRecordId) {
+        formData.append("daily_record_id", selectedDailyRecordId);
+      } else {
+        formData.append("location_id", uploadLocation);
+        formData.append("receipt_date", receiptDate);
+        formData.append("description", description.trim());
+        formData.append("remarks", remarks.trim());
+      }
+
+      const response = await fetch(endpoint, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${token}`,
@@ -453,7 +490,11 @@ export default function ReceiptGalleryPage() {
       if (fileInput) fileInput.value = "";
 
       await loadGallery();
-      setMessage("Receipt uploaded successfully.");
+      setMessage(
+        selectedDailyRecordId
+          ? "Receipt successfully attached to the Daily Record."
+          : "Standalone receipt uploaded successfully."
+      );
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -464,7 +505,6 @@ export default function ReceiptGalleryPage() {
       setSaving(false);
     }
   }
-
   async function handleDelete(item: GalleryItem) {
     const confirmed = window.confirm(
       `Delete "${item.original_file_name}"?\n\n` +
@@ -554,10 +594,19 @@ export default function ReceiptGalleryPage() {
     });
   }, [items, search, locationFilter, typeFilter, dateFrom, dateTo]);
 
+  const pageSize = 20;
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+
+  const paginatedItems = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * pageSize;
+    return filteredItems.slice(startIndex, startIndex + pageSize);
+  }, [filteredItems, safeCurrentPage]);
+
   const groupedItems = useMemo(() => {
     const groups = new Map<string, GalleryItem[]>();
 
-    for (const item of filteredItems) {
+    for (const item of paginatedItems) {
       if (!groups.has(item.locationName)) {
         groups.set(item.locationName, []);
       }
@@ -566,7 +615,7 @@ export default function ReceiptGalleryPage() {
     }
 
     return Array.from(groups.entries());
-  }, [filteredItems]);
+  }, [paginatedItems]);
 
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6 text-slate-900 sm:px-6 lg:px-8">
@@ -624,13 +673,44 @@ export default function ReceiptGalleryPage() {
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="text-lg font-bold">Upload a Receipt / Proof</h2>
           <p className="mt-1 text-sm text-slate-600">
-            JPG, PNG, WEBP, or PDF. Maximum file size: 10 MB.
+            {selectedDailyRecordId ? "Linked files: JPG, PNG, or PDF." : "Standalone files: JPG, PNG, or WEBP."} Maximum file size: 10 MB.
           </p>
 
           <form
             onSubmit={handleSave}
             className="mt-4 grid gap-4 md:grid-cols-2"
           >
+            <div className="md:col-span-2">
+              <label
+                htmlFor="daily-record-link"
+                className="mb-1 block text-sm font-medium text-slate-700"
+              >
+                Link to Daily Record (Optional)
+              </label>
+              <select
+                id="daily-record-link"
+                value={selectedDailyRecordId}
+                onChange={(event) => setSelectedDailyRecordId(event.target.value)}
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+              >
+                <option value="">Standalone receipt — not linked to a transaction</option>
+                {dailyRecordOptions.map((record) => {
+                  const transaction = String(record.transaction_no || record.id);
+                  const transactionLabel = transaction.startsWith("#")
+                    ? transaction
+                    : `#${transaction}`;
+
+                  return (
+                    <option key={record.id} value={String(record.id)}>
+                      {transactionLabel} · {record.record_date || "No date"} · {record.payee || "No payee"}
+                    </option>
+                  );
+                })}
+              </select>
+              <p className="mt-1 text-xs text-slate-500">
+                Choose a transaction to attach the file to that Daily Record.
+              </p>
+            </div>
             <div>
               <label
                 htmlFor="receipt-location"
@@ -642,7 +722,8 @@ export default function ReceiptGalleryPage() {
                 id="receipt-location"
                 value={uploadLocation}
                 onChange={(event) => setUploadLocation(event.target.value)}
-                required
+                required={!selectedDailyRecordId}
+                disabled={Boolean(selectedDailyRecordId)}
                 className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
               >
                 <option value="">Select a location</option>
@@ -715,7 +796,7 @@ export default function ReceiptGalleryPage() {
               <input
                 id="receipt-file"
                 type="file"
-                accept="image/jpeg,image/png,image/webp,application/pdf"
+                accept={selectedDailyRecordId ? "image/jpeg,image/png,application/pdf" : "image/jpeg,image/png,image/webp"}
                 onChange={(event) =>
                   setFile(event.target.files?.[0] ?? null)
                 }
@@ -856,6 +937,34 @@ export default function ReceiptGalleryPage() {
                 onChange={(event) => setDateTo(event.target.value)}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
               />
+            </div>
+          </div>
+
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-slate-600">
+              Showing {filteredItems.length === 0 ? 0 : (safeCurrentPage - 1) * pageSize + 1}
+              {"–"}
+              {Math.min(safeCurrentPage * pageSize, filteredItems.length)}
+              {" of "}{filteredItems.length} files
+              {" · Page "}{safeCurrentPage}{" of "}{totalPages}
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
+                disabled={loading || safeCurrentPage <= 1}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-40"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
+                disabled={loading || safeCurrentPage >= totalPages}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-40"
+              >
+                Next
+              </button>
             </div>
           </div>
 
