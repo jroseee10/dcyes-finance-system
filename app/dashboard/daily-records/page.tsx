@@ -871,33 +871,28 @@ export default function DailyRecordsPage() {
         "Remarks",
       ];
 
-      const summaryRows: (string | number)[][] = filtered
-        .map((record) => ({
-          transactionNo: formatTransactionNo(record.transaction_no),
-          date: formatExcelDate(record.record_date),
-          payee: record.payee || "",
-          employeeName: record.employee_name || "",
-          receiptNo: record.receipt_no || "",
-          location: record.locations?.name || "",
-          address: record.address || "",
-          destination: destinationLabel(record.destination),
-          remarks: record.remarks || "",
-          total: getRecordTotal(record),
-          itemCount: (record.daily_record_items || []).length,
-        }))
-        .map((record) => [
-          record.transactionNo,
-          record.date,
-          record.payee,
-          record.employeeName,
-          record.receiptNo,
-          record.location,
-          record.address,
-          record.destination,
-          record.remarks,
-          record.total,
-          record.itemCount,
-        ]);
+      // Assign export-only numbers after filtering and sorting.
+      // Original database transaction numbers remain unchanged.
+      const exportTransactionNumbers = new Map<number, string>(
+        filtered.map((record, index) => [
+          record.id,
+          String(index + 1).padStart(4, "0"),
+        ])
+      );
+
+      const summaryRows: (string | number)[][] = filtered.map((record) => [
+        exportTransactionNumbers.get(record.id) || "0000",
+        formatExcelDate(record.record_date),
+        record.payee || "",
+        record.employee_name || "",
+        record.receipt_no || "",
+        record.locations?.name || "",
+        record.address || "",
+        destinationLabel(record.destination),
+        record.remarks || "",
+        getRecordTotal(record),
+        (record.daily_record_items || []).length,
+      ]);
 
       const detailRows: (string | number)[][] = filtered.flatMap((record) => {
         const orderedItems = [...(record.daily_record_items || [])].sort(
@@ -905,7 +900,7 @@ export default function DailyRecordsPage() {
         );
 
         return orderedItems.map((item) => [
-          formatTransactionNo(record.transaction_no),
+          exportTransactionNumbers.get(record.id) || "0000",
           formatExcelDate(record.record_date),
           record.payee || "",
           record.employee_name || "",
