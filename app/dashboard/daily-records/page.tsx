@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -130,6 +130,7 @@ export default function DailyRecordsPage() {
   const [profile, setProfile] = useState<CurrentProfile | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
   const [records, setRecords] = useState<DailyRecord[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -137,6 +138,38 @@ export default function DailyRecordsPage() {
   const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null);
   const [reportPeriod, setReportPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
   const [reportDate, setReportDate] = useState(getManilaDate());
+
+  const normalizedSearch = searchTerm.trim().toLocaleLowerCase();
+
+  const filteredRecords = records.filter((record) => {
+    if (!normalizedSearch) return true;
+
+    const searchableValues = [
+      record.transaction_no,
+      record.id,
+      record.record_date,
+      formatDate(record.record_date),
+      record.payee,
+      record.employee_name,
+      record.receipt_no,
+      record.locations?.name,
+      record.address,
+      destinationLabel(record.destination),
+      record.remarks,
+      getRecordTotal(record),
+      ...(record.daily_record_items || []).flatMap((item) => [
+        item.description,
+        item.amount,
+        item.item_order,
+      ]),
+    ];
+
+    return searchableValues
+      .filter((value) => value !== null && value !== undefined)
+      .join(" ")
+      .toLocaleLowerCase()
+      .includes(normalizedSearch);
+  });
 
   const [saveMessage, setSaveMessage] = useState("");
   const [saveMessageType, setSaveMessageType] =
@@ -1857,6 +1890,48 @@ export default function DailyRecordsPage() {
                 </div>
               </div>
 
+              <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                  <div className="flex-1">
+                    <label
+                      htmlFor="daily-record-search"
+                      className="mb-2 block text-sm font-semibold text-slate-700"
+                    >
+                      Search Daily Records
+                    </label>
+                    <input
+                      id="daily-record-search"
+                      type="search"
+                      value={searchTerm}
+                      onChange={(event) => setSearchTerm(event.target.value)}
+                      placeholder="Transaction no., payee, description, receipt no., employee..."
+                      className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <span className="whitespace-nowrap text-sm text-slate-600">
+                      {normalizedSearch
+                        ? `${filteredRecords.length} matching record(s) of ${records.length}`
+                        : `${records.length} record(s)`}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSearchTerm("")}
+                      disabled={!searchTerm}
+                      className="rounded-lg border border-slate-300 px-4 py-3 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  Search by transaction number, date, payee, item description,
+                  amount, project location, address, receipt number, employee,
+                  destination, or remarks.
+                </p>
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[1450px] text-sm">
                   <thead className="bg-slate-900 text-white">
@@ -1890,8 +1965,14 @@ export default function DailyRecordsPage() {
                           No Daily Records yet.
                         </td>
                       </tr>
+                    ) : filteredRecords.length === 0 ? (
+                      <tr>
+                        <td colSpan={13} className="p-10 text-center text-slate-500">
+                          No records match your search. Try another keyword or clear the search.
+                        </td>
+                      </tr>
                     ) : (
-                      records.map((record) => {
+                      filteredRecords.map((record) => {
                         const recordItems = [
                           ...(record.daily_record_items || []),
                         ].sort(
