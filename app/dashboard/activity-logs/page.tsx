@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -37,55 +37,49 @@ export default function ActivityLogsPage() {
     setLoadingRole(true);
 
     try {
-      const {
-        data: authData,
-        error: authError,
-      } = await supabase.auth.getUser();
+      const { data: authData, error: authError } =
+        await supabase.auth.getUser();
 
-      if (
-        authError ||
-        !authData.user?.email
-      ) {
+      if (authError || !authData.user?.email) {
         router.replace("/login");
         return;
       }
 
-      const {
-        data: profile,
-        error: profileError,
-      } = await supabase
+      const email = String(authData.user.email).trim().toLowerCase();
+
+      if (email !== "jerosboty@gmail.com") {
+        setIsAdmin(false);
+        router.replace("/dashboard");
+        return;
+      }
+
+      const { data: profile, error: profileError } = await supabase
         .from("users")
         .select("position, status")
-        .eq("email", authData.user.email)
+        .ilike("email", email)
         .maybeSingle();
 
       if (profileError) {
-        console.error(profileError);
+        console.error("Activity Logs profile check error:", profileError);
         setIsAdmin(false);
+        router.replace("/dashboard");
         return;
       }
 
       const active =
-        String(profile?.status || "")
-          .trim()
-          .toLowerCase() === "active";
-
+        String(profile?.status || "").trim().toLowerCase() === "active";
       const admin =
-        String(profile?.position || "")
-          .trim()
-          .toLowerCase() === "admin";
+        String(profile?.position || "").trim().toLowerCase() === "admin";
 
       if (!active || !admin) {
-        alert("Admin access only.");
-
+        setIsAdmin(false);
         router.replace("/dashboard");
         return;
       }
 
       setIsAdmin(true);
     } catch (error) {
-      console.error("Admin check error:", error);
-
+      console.error("Activity Logs access check error:", error);
       setIsAdmin(false);
       router.replace("/dashboard");
     } finally {
@@ -303,7 +297,7 @@ export default function ActivityLogsPage() {
           >
             {loading
               ? "Refreshing..."
-              : "↻ Refresh"}
+              : "â†» Refresh"}
           </button>
 
         </div>
@@ -343,7 +337,7 @@ export default function ActivityLogsPage() {
             </p>
 
             <p className="text-xl font-bold mt-2 text-blue-700">
-              👑 Admin Only
+              ðŸ‘‘ Admin Only
             </p>
 
           </div>
@@ -360,7 +354,7 @@ export default function ActivityLogsPage() {
             onChange={(e) =>
               setSearch(e.target.value)
             }
-            placeholder="🔎 Search user, action, module, location..."
+            placeholder="ðŸ”Ž Search user, action, module, location..."
             className="w-full border rounded-lg p-3"
           />
 
@@ -468,7 +462,7 @@ export default function ActivityLogsPage() {
 
                         <td className="px-4 py-4">
                           {log.user_position ||
-                            "—"}
+                            "â€”"}
                         </td>
 
                         <td className="px-4 py-4 text-center">
@@ -489,12 +483,12 @@ export default function ActivityLogsPage() {
 
                         <td className="px-4 py-4">
                           {log.location_name ||
-                            "—"}
+                            "â€”"}
                         </td>
 
                         <td className="px-4 py-4">
                           {log.description ||
-                            "—"}
+                            "â€”"}
                         </td>
 
                       </tr>
