@@ -59,6 +59,7 @@ export default function PayrollPage() {
   const [rows, setRows] = useState<PayrollRow[]>([blankRow(1), blankRow(2), blankRow(3)]);
   const [month, setMonth] = useState(today().slice(0, 7));
   const [filterLocation, setFilterLocation] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -110,6 +111,16 @@ export default function PayrollPage() {
   const removeRow = (index: number) => setRows(current => current.filter((_, i) => i !== index).map((row, i) => ({ ...row, employee_no: i + 1 })));
 
   const visibleBatches = useMemo(() => batches.filter(batch => filterLocation === "all" || String(batch.location_id) === filterLocation), [batches, filterLocation]);
+  const filteredSavedBatches = useMemo(() => {
+    const query = searchTerm.trim().toLocaleLowerCase();
+    return visibleBatches.filter(batch => {
+      if (!query) return true;
+      const batchFields = [batch.location_name, batch.pay_date, dateLabel(batch.pay_date), batch.week_start, dateLabel(batch.week_start), batch.week_end, dateLabel(batch.week_end)];
+      const batchMatches = batchFields.some(value => String(value || "").toLocaleLowerCase().includes(query));
+      const employeeMatches = (batch.payroll_records || []).some(record => String(record.employee_name || "").toLocaleLowerCase().includes(query));
+      return batchMatches || employeeMatches;
+    });
+  }, [visibleBatches, searchTerm]);
   const monthTotal = useMemo(() => visibleBatches.reduce((sum, batch) => sum + (batch.payroll_records || []).reduce((s, row) => s + Number(row.net_amount || 0), 0), 0), [visibleBatches]);
   const monthEmployees = useMemo(() => visibleBatches.reduce((sum, batch) => sum + (batch.payroll_records || []).length, 0), [visibleBatches]);
   const locationTotals = useMemo(() => {
@@ -969,11 +980,12 @@ export default function PayrollPage() {
               <div className="flex flex-wrap gap-3">
                 <label className="text-sm text-slate-600">Month<input type="month" value={month} onChange={e => setMonth(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 p-2" /></label>
                 <label className="text-sm text-slate-600">Location<select value={filterLocation} onChange={e => setFilterLocation(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 p-2"><option value="all">All locations</option>{locations.map(location => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
+                <label className="text-sm text-slate-600">Search payroll<input type="search" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Employee, location, week, or pay date" className="mt-1 block w-full min-w-64 rounded-lg border border-slate-300 p-2" /></label>
                 <button type="button" onClick={() => void exportMonthly()} disabled={!visibleBatches.length} className="self-end rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40">Export Monthly Excel</button>
               </div>
             </div>
-            {loading ? <p className="py-8 text-sm text-slate-500">Loading payroll</p> : !visibleBatches.length ? <p className="py-8 text-sm text-slate-500">No payroll batches found for this month and location.</p> :
-              <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-600"><tr><th className="px-3 py-3">Pay Date</th><th className="px-3 py-3">Payroll Week</th><th className="px-3 py-3">Location</th><th className="px-3 py-3">Employees</th><th className="px-3 py-3">Net Payroll</th><th className="px-3 py-3">Excel</th><th className="px-3 py-3">Actions</th></tr></thead><tbody>{visibleBatches.map(batch => <tr key={batch.id} className="border-t border-slate-100"><td className="px-3 py-3">{dateLabel(batch.pay_date)}</td><td className="px-3 py-3">{dateLabel(batch.week_start)} “ {dateLabel(batch.week_end)}</td><td className="px-3 py-3">{batch.location_name}</td><td className="px-3 py-3">{(batch.payroll_records || []).length}</td><td className="px-3 py-3 font-semibold">{money((batch.payroll_records || []).reduce((s, row) => s + Number(row.net_amount || 0), 0))}</td><td className="px-3 py-3"><button type="button" onClick={() => void exportWeekly(batch)} className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-50">Export .xlsx</button></td><td className="px-3 py-3"><button type="button" onClick={() => void deletePayroll(batch)} disabled={deletingId !== null} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">{deletingId === batch.id ? "Deleting..." : "Delete"}</button></td></tr>)}</tbody></table></div>}
+            {loading ? <p className="py-8 text-sm text-slate-500">Loading payroll</p> : !visibleBatches.length ? <p className="py-8 text-sm text-slate-500">No payroll batches found for this month and location.</p> : !filteredSavedBatches.length ? <p className="py-8 text-sm text-slate-500">No payroll records match your search.</p> :
+              <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-600"><tr><th className="px-3 py-3">Pay Date</th><th className="px-3 py-3">Payroll Week</th><th className="px-3 py-3">Location</th><th className="px-3 py-3">Employees</th><th className="px-3 py-3">Net Payroll</th><th className="px-3 py-3">Excel</th><th className="px-3 py-3">Actions</th></tr></thead><tbody>{filteredSavedBatches.map(batch => <tr key={batch.id} className="border-t border-slate-100"><td className="px-3 py-3">{dateLabel(batch.pay_date)}</td><td className="px-3 py-3">{dateLabel(batch.week_start)} “ {dateLabel(batch.week_end)}</td><td className="px-3 py-3">{batch.location_name}</td><td className="px-3 py-3">{(batch.payroll_records || []).length}</td><td className="px-3 py-3 font-semibold">{money((batch.payroll_records || []).reduce((s, row) => s + Number(row.net_amount || 0), 0))}</td><td className="px-3 py-3"><button type="button" onClick={() => void exportWeekly(batch)} className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-50">Export .xlsx</button></td><td className="px-3 py-3"><button type="button" onClick={() => void deletePayroll(batch)} disabled={deletingId !== null} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">{deletingId === batch.id ? "Deleting..." : "Delete"}</button></td></tr>)}</tbody></table></div>}
           </section>
           <p className="text-xs text-slate-500">OT calculation: daily rate Ã· 8 Ã— OT hours. Net amount: total pay + overtime. No deductions or OT multiplier are applied.</p>
         </div>
@@ -981,4 +993,3 @@ export default function PayrollPage() {
     </div>
   );
 }
-
