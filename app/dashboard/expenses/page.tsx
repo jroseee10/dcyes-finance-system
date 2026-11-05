@@ -147,29 +147,29 @@ export default function ExpensesPage() {
   // =========================
 
   return (
-    <main className="min-h-screen bg-slate-100 flex">
+    <main className="min-h-screen bg-[#f3f6fb] flex">
       <Sidebar />
 
       <div className="flex-1">
-        <section className="flex-1 p-8">
+        <section className="min-w-0 flex-1 p-5 md:p-8 xl:p-10">
 
           {/* HEADER */}
 
-          <div className="flex items-center justify-between mb-8">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
 
             <div>
-              <h1 className="text-3xl font-bold text-slate-900">
+              <h1 className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900">
                 Monthly Expenses
               </h1>
 
-              <p className="text-gray-500 mt-2">
+              <p className="text-sm text-slate-500 mt-1">
                 Manage and monitor all company expenses
               </p>
             </div>
 
             <button
               onClick={loadExpenses}
-              className="bg-slate-900 hover:bg-slate-800 text-white px-5 py-3 rounded-lg"
+              className="bg-[#142b4a] hover:bg-[#1d3b60] text-white px-5 py-3 rounded-lg text-sm font-medium transition-colors"
             >
               ↻ Refresh
             </button>
@@ -178,27 +178,27 @@ export default function ExpensesPage() {
 
           {/* SUMMARY */}
 
-          <div className="grid grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-5 mb-8">
 
-            <div className="bg-white rounded-xl shadow p-6">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 md:p-6">
 
-              <p className="text-gray-500 text-sm">
+              <p className="text-sm font-medium text-slate-500">
                 Total Records
               </p>
 
-              <p className="text-3xl font-bold mt-2">
+              <p className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 mt-3 tabular-nums">
                 {expenses.length}
               </p>
 
             </div>
 
-            <div className="bg-white rounded-xl shadow p-6">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 md:p-6">
 
-              <p className="text-gray-500 text-sm">
+              <p className="text-sm font-medium text-slate-500">
                 Total Expenses
               </p>
 
-              <p className="text-3xl font-bold mt-2">
+              <p className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 mt-3 tabular-nums">
                 ₱
                 {totalExpenses.toLocaleString(
                   "en-PH",
@@ -211,13 +211,13 @@ export default function ExpensesPage() {
 
             </div>
 
-            <div className="bg-white rounded-xl shadow p-6">
+            <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 md:p-6">
 
-              <p className="text-gray-500 text-sm">
+              <p className="text-sm font-medium text-slate-500">
                 Showing
               </p>
 
-              <p className="text-3xl font-bold mt-2">
+              <p className="text-2xl md:text-3xl font-semibold tracking-tight text-slate-900 mt-3 tabular-nums">
                 {filteredExpenses.length}
               </p>
 
@@ -227,7 +227,7 @@ export default function ExpensesPage() {
 
           {/* SEARCH */}
 
-          <div className="bg-white rounded-xl shadow p-5 mb-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 md:p-6 mb-6">
 
             <input
               type="text"
@@ -238,18 +238,18 @@ export default function ExpensesPage() {
                   e.target.value
                 )
               }
-              className="w-full border rounded-lg p-3 outline-none focus:ring-2 focus:ring-blue-500"
+              className="w-full min-h-14 border border-slate-300 rounded-lg px-4 py-3.5 text-base text-slate-800 placeholder:text-slate-400 outline-none transition focus:border-[#142b4a] focus:ring-2 focus:ring-[#142b4a]/15"
             />
 
           </div>
 
           {/* TABLE */}
 
-          <div className="bg-white rounded-xl shadow overflow-hidden">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
 
-            <div className="px-6 py-5 border-b">
+            <div className="px-5 md:px-6 py-5 border-b border-slate-200">
 
-              <h2 className="text-xl font-bold">
+              <h2 className="text-lg font-semibold tracking-tight text-slate-900">
                 Expense Records
               </h2>
 
@@ -257,14 +257,14 @@ export default function ExpensesPage() {
 
             {loading ? (
 
-              <div className="p-10 text-center text-gray-500">
+              <div className="p-12 text-center text-sm text-slate-500">
                 Loading expenses...
               </div>
 
             ) : filteredExpenses.length ===
               0 ? (
 
-              <div className="p-10 text-center text-gray-500">
+              <div className="p-12 text-center text-sm text-slate-500">
                 No expense records found.
               </div>
 
@@ -274,35 +274,35 @@ export default function ExpensesPage() {
 
                 <table className="w-full">
 
-                  <thead className="bg-slate-50">
+                  <thead className="bg-slate-100">
 
                     <tr>
 
-                      <th className="text-left p-4 text-sm font-semibold">
+                      <th className="text-left px-5 py-4 text-sm font-semibold text-slate-600">
                         Date
                       </th>
 
-                      <th className="text-left p-4 text-sm font-semibold">
+                      <th className="text-left px-5 py-4 text-sm font-semibold text-slate-600">
                         Payee
                       </th>
 
-                      <th className="text-left p-4 text-sm font-semibold">
+                      <th className="text-left px-5 py-4 text-sm font-semibold text-slate-600">
                         Products
                       </th>
 
-                      <th className="text-left p-4 text-sm font-semibold">
+                      <th className="text-left px-5 py-4 text-sm font-semibold text-slate-600">
                         Category
                       </th>
 
-                      <th className="text-left p-4 text-sm font-semibold">
+                      <th className="text-left px-5 py-4 text-sm font-semibold text-slate-600">
                         Branch
                       </th>
 
-                      <th className="text-right p-4 text-sm font-semibold">
+                      <th className="text-right px-5 py-4 text-sm font-semibold text-slate-600">
                         Amount
                       </th>
 
-                      <th className="text-center p-4 text-sm font-semibold">
+                      <th className="text-center px-5 py-4 text-sm font-semibold text-slate-600">
                         Status
                       </th>
 
@@ -319,12 +319,12 @@ export default function ExpensesPage() {
                           key={
                             expense.id
                           }
-                          className="border-t hover:bg-slate-50 align-top"
+                          className="border-t border-slate-100 hover:bg-slate-50/80 align-top transition-colors"
                         >
 
                           {/* DATE */}
 
-                          <td className="p-4 whitespace-nowrap">
+                          <td className="px-5 py-5 whitespace-nowrap text-sm text-slate-700">
 
                             {new Date(
                               expense.expense_date +
@@ -342,7 +342,7 @@ export default function ExpensesPage() {
 
                           {/* PAYEE */}
 
-                          <td className="p-4 font-medium">
+                          <td className="px-5 py-5 font-medium text-sm text-slate-800">
 
                             {expense.payee}
 
@@ -365,7 +365,7 @@ export default function ExpensesPage() {
                                       key={
                                         item.id
                                       }
-                                      className="border-b last:border-b-0 pb-1 last:pb-0"
+                                      className="border-b border-slate-100 last:border-b-0 pb-2 last:pb-0"
                                     >
 
                                       <div className="font-medium">
@@ -374,7 +374,7 @@ export default function ExpensesPage() {
                                         }
                                       </div>
 
-                                      <div className="text-xs text-gray-500">
+                                      <div className="text-sm text-slate-500">
 
                                         {Number(
                                           item.qty
@@ -432,7 +432,7 @@ export default function ExpensesPage() {
 
                           {/* AMOUNT */}
 
-                          <td className="p-4 text-right font-semibold whitespace-nowrap">
+                          <td className="px-5 py-5 text-right font-semibold text-sm text-slate-900 whitespace-nowrap tabular-nums">
 
                             ₱
                             {Number(
@@ -450,10 +450,10 @@ export default function ExpensesPage() {
 
                           {/* STATUS */}
 
-                          <td className="p-4 text-center">
+                          <td className="px-5 py-5 text-center">
 
                             <span
-                              className={`inline-block px-3 py-1 rounded-full text-sm ${
+                              className={`inline-flex items-center px-3 py-1.5 rounded-full text-xs font-semibold ${
                                 expense.status ===
                                 "Paid"
                                   ? "bg-green-100 text-green-700"

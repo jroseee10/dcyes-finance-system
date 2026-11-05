@@ -460,16 +460,16 @@ export default function DailyPeriodReport({
   };
 
   return (
-    <main className="flex min-h-screen bg-slate-50">
+    <main className="flex min-h-screen bg-[#f3f6fb]">
       <Sidebar />
 
-      <section className="min-w-0 flex-1 p-5 md:p-8">
-        <div className="mb-7 flex flex-wrap items-center justify-between gap-4">
+      <section className="min-w-0 flex-1 p-5 md:p-8 xl:p-10">
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
               {reportLabel(period)}
             </h1>
-            <p className="mt-2 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-slate-500">
               Totals are calculated from saved Daily Records and their
               item amounts. Reports do not create duplicate records.
             </p>
@@ -479,13 +479,13 @@ export default function DailyPeriodReport({
             type="button"
             onClick={() => void exportExcel()}
             disabled={loading || rows.length === 0 || exporting}
-            className="rounded-xl bg-emerald-700 px-4 py-3 font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-lg bg-[#142b4a] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1d3b60] disabled:cursor-not-allowed disabled:opacity-40"
           >
             {exporting ? "Preparing Excel..." : "Export Excel (.xlsx)"}
           </button>
         </div>
 
-        <div className="mb-6 flex flex-wrap items-end gap-4 rounded-2xl border border-slate-200 bg-white p-5">
+        <div className="mb-6 flex flex-wrap items-end gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <label className="text-sm font-semibold text-slate-700">
             {period === "monthly"
               ? "Select month"
@@ -494,7 +494,7 @@ export default function DailyPeriodReport({
                 : "Select date"}
 
             <input
-              className="mt-2 block rounded-lg border border-slate-300 px-3 py-2 font-normal"
+              className="mt-2 block rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal text-slate-800 outline-none transition focus:border-[#244A78] focus:ring-2 focus:ring-[#244A78]/10"
               type={period === "monthly" ? "month" : "date"}
               value={period === "monthly" ? date.slice(0, 7) : date}
               max={localDate()}
@@ -519,63 +519,63 @@ export default function DailyPeriodReport({
         </div>
 
         {error && (
-          <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <div className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             <strong>Could not load report:</strong> {error}
           </div>
         )}
 
         {exportError && (
-          <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <div className="mb-5 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {exportError}
           </div>
         )}
 
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">Overall Total</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
+            <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
               {loading ? "Loading..." : money(total)}
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">Saved Transactions</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
+            <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
               {loading ? "..." : rows.length}
             </p>
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <p className="text-sm text-slate-500">Days With Records</p>
-            <p className="mt-2 text-2xl font-bold text-slate-900">
+            <p className="mt-2 text-2xl font-semibold tracking-tight text-slate-900">
               {loading ? "..." : daily.size}
             </p>
           </div>
         </div>
 
         {period !== "daily" && (
-          <div className="mb-6 overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 p-5">
-              <h2 className="font-bold text-slate-900">Daily Totals</h2>
+          <div className="mb-6 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h2 className="text-base font-semibold tracking-tight text-slate-900">Daily Totals</h2>
             </div>
 
             <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-500">
+              <thead className="bg-slate-100 text-slate-600">
                 <tr>
-                  <th className="px-5 py-3 text-left">Date</th>
-                  <th className="px-5 py-3 text-right">Transactions</th>
-                  <th className="px-5 py-3 text-right">Total</th>
+                  <th className="px-5 py-3 text-left text-xs font-semibold uppercase tracking-wide">Date</th>
+                  <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide">Transactions</th>
+                  <th className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide">Total</th>
                 </tr>
               </thead>
 
               <tbody>
                 {[...daily.entries()].map(([day, value]) => (
-                  <tr key={day} className="border-t border-slate-200">
+                  <tr key={day} className="border-t border-slate-100">
                     <td className="px-5 py-3">{day}</td>
-                    <td className="px-5 py-3 text-right">
+                    <td className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide">
                       {value.count}
                     </td>
-                    <td className="px-5 py-3 text-right font-semibold">
+                    <td className="px-5 py-3 text-right text-xs font-semibold uppercase tracking-wide font-semibold">
                       {money(value.total)}
                     </td>
                   </tr>
@@ -596,15 +596,15 @@ export default function DailyPeriodReport({
           </div>
         )}
 
-        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 p-5">
-            <h2 className="font-bold text-slate-900">
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-200 px-5 py-4">
+            <h2 className="text-base font-semibold tracking-tight text-slate-900">
               Transaction Details
             </h2>
           </div>
 
           <table className="w-full min-w-[1000px] text-sm">
-            <thead className="bg-slate-50 text-slate-500">
+            <thead className="bg-slate-100 text-slate-600">
               <tr>
                 {[
                   "Date",
@@ -618,7 +618,7 @@ export default function DailyPeriodReport({
                 ].map((heading) => (
                   <th
                     key={heading}
-                    className="px-4 py-3 text-left"
+                    className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide"
                   >
                     {heading}
                   </th>
@@ -641,7 +641,7 @@ export default function DailyPeriodReport({
                   {rows.map((record) => (
                     <tr
                       key={record.id}
-                      className="border-t border-slate-200 hover:bg-slate-50"
+                      className="border-t border-slate-100 transition-colors hover:bg-slate-50/80"
                     >
                       <td className="px-4 py-3">
                         {record.record_date}
@@ -690,15 +690,15 @@ export default function DailyPeriodReport({
             </tbody>
 
             {!loading && rows.length > 0 && (
-              <tfoot className="border-t-2 border-slate-300 bg-slate-50">
+              <tfoot className="border-t-2 border-slate-200 bg-slate-50">
                 <tr>
                   <td
                     colSpan={7}
-                    className="px-4 py-4 text-right font-bold text-slate-900"
+                    className="px-4 py-4 text-right text-sm font-semibold text-slate-900"
                   >
                     GRAND TOTAL
                   </td>
-                  <td className="px-4 py-4 text-right font-bold text-slate-900">
+                  <td className="px-4 py-4 text-right text-sm font-semibold text-slate-900">
                     {money(total)}
                   </td>
                 </tr>

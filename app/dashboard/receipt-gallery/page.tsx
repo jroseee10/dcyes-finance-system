@@ -16,6 +16,7 @@ type DailyRecordOption = {
   record_date?: string | null;
   payee?: string | null;
   location_id?: number | string | null;
+  location_name?: string | null;
 };
 
 type FileRecord = {
@@ -263,15 +264,21 @@ export default function ReceiptGalleryPage() {
         );
       }
 
-      setDailyRecordOptions(
-        (transactionRows ?? []) as DailyRecordOption[]
-      );
-
       const locationMap = new Map(
         locationRows.map((location) => [
           String(location.id),
           location.name,
         ])
+      );
+
+      setDailyRecordOptions(
+        (transactionRows ?? []).map((record) => ({
+          ...record,
+          location_name:
+            record.location_id == null
+              ? null
+              : locationMap.get(String(record.location_id)) ?? null,
+        })) as DailyRecordOption[]
       );
 
       const standaloneItems: GalleryItem[] = await Promise.all(
@@ -638,7 +645,7 @@ export default function ReceiptGalleryPage() {
               href="/dashboard"
               className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-100"
             >
-              ← Back to Dashboard
+              Back to Dashboard
             </Link>
 
             <button
@@ -670,30 +677,30 @@ export default function ReceiptGalleryPage() {
           </div>
         )}
 
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="text-lg font-bold">Upload a Receipt / Proof</h2>
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+          <h2 className="text-lg font-bold tracking-tight text-[#142b4a]">Upload a Receipt / Proof</h2>
           <p className="mt-1 text-sm text-slate-600">
             {selectedDailyRecordId ? "Linked files: JPG, PNG, or PDF." : "Standalone files: JPG, PNG, or WEBP."} Maximum file size: 10 MB.
           </p>
 
           <form
             onSubmit={handleSave}
-            className="mt-4 grid gap-4 md:grid-cols-2"
+            className="mt-5 grid gap-5 md:grid-cols-2"
           >
             <div className="md:col-span-2">
               <label
                 htmlFor="daily-record-link"
                 className="mb-1 block text-sm font-medium text-slate-700"
               >
-                Link to Daily Record (Optional)
+                <option value="">Standalone receipt (not linked to a Daily Record)</option>
               </label>
               <select
                 id="daily-record-link"
                 value={selectedDailyRecordId}
                 onChange={(event) => setSelectedDailyRecordId(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               >
-                <option value="">Standalone receipt — not linked to a transaction</option>
+                <option value="">Standalone receipt (not linked to a Daily Record)</option>
                 {dailyRecordOptions.map((record) => {
                   const transaction = String(record.transaction_no || record.id);
                   const transactionLabel = transaction.startsWith("#")
@@ -702,7 +709,7 @@ export default function ReceiptGalleryPage() {
 
                   return (
                     <option key={record.id} value={String(record.id)}>
-                      {transactionLabel} · {record.record_date || "No date"} · {record.payee || "No payee"}
+                      {transactionLabel} · {record.record_date || "No date"} · {record.payee || "No payee"} · {record.location_name || "No location"}
                     </option>
                   );
                 })}
@@ -724,7 +731,7 @@ export default function ReceiptGalleryPage() {
                 onChange={(event) => setUploadLocation(event.target.value)}
                 required={!selectedDailyRecordId}
                 disabled={Boolean(selectedDailyRecordId)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               >
                 <option value="">Select a location</option>
                 {locations.map((location) => (
@@ -748,7 +755,7 @@ export default function ReceiptGalleryPage() {
                 value={receiptDate}
                 onChange={(event) => setReceiptDate(event.target.value)}
                 required
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               />
             </div>
 
@@ -765,7 +772,7 @@ export default function ReceiptGalleryPage() {
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
                 placeholder="e.g. Office supplies receipt"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               />
             </div>
 
@@ -782,7 +789,7 @@ export default function ReceiptGalleryPage() {
                 value={remarks}
                 onChange={(event) => setRemarks(event.target.value)}
                 placeholder="Optional remarks"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               />
             </div>
 
@@ -801,11 +808,11 @@ export default function ReceiptGalleryPage() {
                   setFile(event.target.files?.[0] ?? null)
                 }
                 required
-                className="block w-full rounded-lg border border-slate-300 bg-white text-sm"
+                className="block w-full rounded-lg border border-slate-300 bg-slate-50 p-3 text-sm file:mr-4 file:rounded-md file:border-0 file:bg-[#e8eef5] file:px-4 file:py-2 file:text-sm file:font-semibold file:text-[#142b4a] hover:file:bg-[#dce6f0]"
               />
               {file && (
                 <p className="mt-1 text-xs text-slate-500">
-                  {file.name} · {formatBytes(file.size)}
+                  {file.name} Ãƒâ€šÃ‚Â· {formatBytes(file.size)}
                 </p>
               )}
             </div>
@@ -814,7 +821,7 @@ export default function ReceiptGalleryPage() {
               <button
                 type="submit"
                 disabled={saving || loading || deletingId !== null}
-                className="rounded-lg bg-blue-700 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center rounded-lg bg-[#142b4a] px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-[#203d60] disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {saving ? "Uploading..." : "Upload Receipt"}
               </button>
@@ -822,16 +829,16 @@ export default function ReceiptGalleryPage() {
           </form>
         </section>
 
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
           <div className="mb-4">
-            <h2 className="text-lg font-bold">Saved Receipts and Proofs</h2>
+            <h2 className="text-lg font-bold tracking-tight text-[#142b4a]">Saved Receipts and Proofs</h2>
             <p className="text-sm text-slate-600">
               {filteredItems.length} file
               {filteredItems.length === 1 ? "" : "s"} found
             </p>
           </div>
 
-          <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mb-6 grid gap-4 rounded-xl border border-slate-100 bg-slate-50/70 p-4 sm:grid-cols-2 lg:grid-cols-5">
             <div className="lg:col-span-2">
               <label
                 htmlFor="gallery-search"
@@ -845,7 +852,7 @@ export default function ReceiptGalleryPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search filename, location, description..."
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               />
             </div>
 
@@ -860,7 +867,7 @@ export default function ReceiptGalleryPage() {
                 id="gallery-location"
                 value={locationFilter}
                 onChange={(event) => setLocationFilter(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               >
                 <option value="all">All locations</option>
                 <option value="daily">Daily record attachments</option>
@@ -883,7 +890,7 @@ export default function ReceiptGalleryPage() {
                 id="gallery-type"
                 value={typeFilter}
                 onChange={(event) => setTypeFilter(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               >
                 <option value="all">All files</option>
                 <option value="images">Images</option>
@@ -901,7 +908,7 @@ export default function ReceiptGalleryPage() {
                   setDateFrom("");
                   setDateTo("");
                 }}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-slate-100"
               >
                 Clear Filters
               </button>
@@ -919,7 +926,7 @@ export default function ReceiptGalleryPage() {
                 type="date"
                 value={dateFrom}
                 onChange={(event) => setDateFrom(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               />
             </div>
 
@@ -935,7 +942,7 @@ export default function ReceiptGalleryPage() {
                 type="date"
                 value={dateTo}
                 onChange={(event) => setDateTo(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm outline-none transition focus:border-[#31577f] focus:ring-2 focus:ring-[#31577f]/10"
               />
             </div>
           </div>
@@ -943,17 +950,17 @@ export default function ReceiptGalleryPage() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm text-slate-600">
               Showing {filteredItems.length === 0 ? 0 : (safeCurrentPage - 1) * pageSize + 1}
-              {"–"}
+              {"-"}
               {Math.min(safeCurrentPage * pageSize, filteredItems.length)}
               {" of "}{filteredItems.length} files
-              {" · Page "}{safeCurrentPage}{" of "}{totalPages}
+              {" - Page "}{safeCurrentPage}{" of "}{totalPages}
             </p>
             <div className="flex gap-2">
               <button
                 type="button"
                 onClick={() => setCurrentPage(Math.max(1, safeCurrentPage - 1))}
                 disabled={loading || safeCurrentPage <= 1}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-40"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-[#142b4a] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Previous
               </button>
@@ -961,7 +968,7 @@ export default function ReceiptGalleryPage() {
                 type="button"
                 onClick={() => setCurrentPage(Math.min(totalPages, safeCurrentPage + 1))}
                 disabled={loading || safeCurrentPage >= totalPages}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-40"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-[#142b4a] transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Next
               </button>
@@ -985,8 +992,8 @@ export default function ReceiptGalleryPage() {
             <div className="space-y-8">
               {groupedItems.map(([groupName, groupItems]) => (
                 <div key={groupName}>
-                  <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-2">
-                    <h3 className="font-bold text-slate-800">
+                  <div className="mb-4 flex items-center justify-between border-b border-slate-200 pb-3">
+                    <h3 className="font-bold tracking-tight text-[#142b4a]">
                       {groupName}
                     </h3>
                     <span className="text-xs text-slate-500">
@@ -995,7 +1002,7 @@ export default function ReceiptGalleryPage() {
                     </span>
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                  <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {groupItems.map((item) => {
                       const isDeleting = deletingId === item.id;
                       const isImage = item.content_type.startsWith("image/");
@@ -1005,15 +1012,15 @@ export default function ReceiptGalleryPage() {
                       return (
                         <article
                           key={item.id}
-                          className="overflow-hidden rounded-xl border border-slate-200 bg-white"
+                          className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
                         >
-                          <div className="flex h-44 items-center justify-center overflow-hidden bg-slate-100">
+                          <div className="flex h-56 items-center justify-center overflow-hidden border-b border-slate-100 bg-slate-50 p-3">
                             {item.signedUrl && isImage ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
                                 src={item.signedUrl}
                                 alt={item.original_file_name}
-                                className="h-full w-full object-contain"
+                                className="h-full w-full object-contain transition duration-300 group-hover:scale-[1.02]"
                                 onError={() => {
                                   console.warn(
                                     "Receipt image failed to load:",
@@ -1025,7 +1032,7 @@ export default function ReceiptGalleryPage() {
                             ) : (
                               <div className="px-4 text-center">
                                 <div className="text-4xl">
-                                  {isPdf ? "📄" : "🧾"}
+                                  <div className="text-2xl font-bold tracking-wider text-[#142b4a]">{isPdf ? "PDF" : "FILE"}</div>
                                 </div>
                                 <p className="mt-2 text-xs font-semibold uppercase text-slate-600">
                                   {isPdf ? "PDF Document" : "Receipt File"}
@@ -1039,16 +1046,16 @@ export default function ReceiptGalleryPage() {
                             )}
                           </div>
 
-                          <div className="space-y-3 p-4">
+                          <div className="space-y-4 p-4">
                             <div>
                               <p
-                                className="break-words text-sm font-semibold text-slate-800"
+                                className="break-words text-sm font-bold leading-5 text-[#142b4a]"
                                 title={item.original_file_name}
                               >
                                 {item.original_file_name}
                               </p>
                               <p className="mt-1 text-xs text-slate-500">
-                                {formatDate(item.created_at)} ·{" "}
+                                {formatDate(item.created_at)} -{" "}{formatBytes(item.file_size)}
                                 {formatBytes(item.file_size)}
                               </p>
                               {item.description && (
@@ -1065,14 +1072,14 @@ export default function ReceiptGalleryPage() {
                                     href={item.signedUrl}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                                    className="rounded-lg border border-[#142b4a] bg-[#142b4a] px-3 py-2 text-xs font-semibold text-white transition hover:bg-[#203d60]"
                                   >
                                     View
                                   </a>
                                   <a
                                     href={item.signedUrl}
                                     download={item.original_file_name}
-                                    className="rounded-lg border border-slate-300 px-3 py-2 text-xs font-semibold hover:bg-slate-50"
+                                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
                                   >
                                     Download
                                   </a>
@@ -1089,13 +1096,13 @@ export default function ReceiptGalleryPage() {
                                 disabled={
                                   deletingId !== null || saving || loading
                                 }
-                                className="rounded-lg border border-red-300 px-3 py-2 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 {isDeleting ? "Deleting..." : "Delete"}
                               </button>
                             </div>
 
-                            <p className="text-[11px] text-slate-400">
+                            <p className="border-t border-slate-100 pt-3 text-[11px] font-medium text-slate-500">
                               {item.kind === "daily"
                                 ? "Daily record attachment"
                                 : "Standalone receipt"}

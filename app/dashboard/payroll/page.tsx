@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
@@ -6,7 +6,9 @@ import { supabase } from "@/lib/supabase";
 import ExcelJS from "exceljs";
 
 type Location = { id: number; name: string; address?: string | null };
+
 type PayrollRow = {
+  id?: string;
   employee_no: number;
   employee_name: string;
   designation: string;
@@ -14,9 +16,12 @@ type PayrollRow = {
   days_worked: number;
   total_pay: number;
   overtime_hours: number;
+  overtime_mode: "automatic" | "manual";
+  manual_overtime_amount: number;
   overtime_total: number;
   net_amount: number;
 };
+
 type Batch = {
   id: string;
   pay_date: string;
@@ -34,63 +39,159 @@ const today = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+
+const roundMoney = (value: number) =>
+  Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+
 const blankRow = (no: number): PayrollRow => ({
-  employee_no: no, employee_name: "", designation: "", daily_rate: 0,
-  days_worked: 0, total_pay: 0, overtime_hours: 0, overtime_total: 0, net_amount: 0,
+  employee_no: no,
+  employee_name: "",
+  designation: "",
+  daily_rate: 0,
+  days_worked: 0,
+  total_pay: 0,
+  overtime_hours: 0,
+  overtime_mode: "automatic",
+  manual_overtime_amount: 0,
+  overtime_total: 0,
+  net_amount: 0,
 });
-const money = (value: number) => new Intl.NumberFormat("en-PH", { style: "currency", currency: "PHP" }).format(value || 0);
-const dateLabel = (value: string) => value ? new Date(`${value}T00:00:00`).toLocaleDateString("en-PH") : "”";
+
+const money = (value: number) =>
+  new Intl.NumberFormat("en-PH", {
+    style: "currency",
+    currency: "PHP",
+  }).format(value || 0);
+
+const dateLabel = (value: string) =>
+  value
+    ? new Date(`${value}T00:00:00`).toLocaleDateString("en-PH")
+    : "—";
+
 const calculate = (row: PayrollRow): PayrollRow => {
-  const totalPay = Math.round(Number(row.daily_rate || 0) * Number(row.days_worked || 0) * 100) / 100;
-  const overtimeTotal = Math.round((Number(row.daily_rate || 0) / 8) * Number(row.overtime_hours || 0) * 100) / 100;
-  return { ...row, total_pay: totalPay, overtime_total: overtimeTotal, net_amount: Math.round((totalPay + overtimeTotal) * 100) / 100 };
+  const dailyRate = Number(row.daily_rate || 0);
+  const daysWorked = Number(row.days_worked || 0);
+  const overtimeHours = Number(row.overtime_hours || 0);
+  const mode = row.overtime_mode === "manual" ? "manual" : "automatic";
+  const manualAmount = roundMoney(Number(row.manual_overtime_amount || 0));
+
+  const totalPay = roundMoney(dailyRate * daysWorked);
+
+  const overtimeTotal =
+    mode === "manual"
+      ? manualAmount
+      : roundMoney((dailyRate / 8) * overtimeHours);
+
+  return {
+    ...row,
+    overtime_mode: mode,
+    manual_overtime_amount: manualAmount,
+    total_pay: totalPay,
+    overtime_total: overtimeTotal,
+    net_amount: roundMoney(totalPay + overtimeTotal),
+  };
 };
+
+const normalizeRow = (row: PayrollRow, employeeNo: number): PayrollRow =>
+  calculate({
+    ...blankRow(employeeNo),
+    ...row,
+    employee_no: employeeNo,
+    overtime_mode: row.overtime_mode === "manual" ? "manual" : "automatic",
+    manual_overtime_amount: Number(row.manual_overtime_amount || 0),
+  });
+
+const currencyFormat = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
 
 export default function PayrollPage() {
   const [locations, setLocations] = useState<Location[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [allTimeBatches, setAllTimeBatches] = useState<Batch[]>([]);
+
   const [payDate, setPayDate] = useState(today());
   const [weekStart, setWeekStart] = useState(today());
   const [weekEnd, setWeekEnd] = useState(today());
   const [locationId, setLocationId] = useState("");
   const [preparedBy, setPreparedBy] = useState("");
   const [notes, setNotes] = useState("");
-  const [rows, setRows] = useState<PayrollRow[]>([blankRow(1), blankRow(2), blankRow(3)]);
+  const [rows, setRows] = useState<PayrollRow[]>([
+    blankRow(1),
+    blankRow(2),
+    blankRow(3),
+  ]);
+
   const [month, setMonth] = useState(today().slice(0, 7));
   const [filterLocation, setFilterLocation] = useState("all");
   const [searchTerm, setSearchTerm] = useState("");
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
+  const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
+  const [editPayDate, setEditPayDate] = useState("");
+  const [editWeekStart, setEditWeekStart] = useState("");
+  const [editWeekEnd, setEditWeekEnd] = useState("");
+  const [editLocationId, setEditLocationId] = useState("");
+  const [editPreparedBy, setEditPreparedBy] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [editRows, setEditRows] = useState<PayrollRow[]>([]);
+  const [updating, setUpdating] = useState(false);
+
   const getToken = useCallback(async () => {
     const { data, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !data.session?.access_token) throw new Error("Your session expired. Please log in again.");
+
+    if (sessionError || !data.session?.access_token) {
+      throw new Error("Your session expired. Please log in again.");
+    }
+
     return data.session.access_token;
   }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+
     try {
       const token = await getToken();
-      const response = await fetch(`/api/admin/payroll?month=${encodeURIComponent(month)}`, {
-        headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
-      });
+
+      const response = await fetch(
+        `/api/admin/payroll?month=${encodeURIComponent(month)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        },
+      );
+
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Unable to load payroll.");
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to load payroll.");
+      }
+
       setLocations(result.locations || []);
       setBatches(result.batches || []);
+
       const allResponse = await fetch("/api/admin/payroll", {
-        headers: { Authorization: `Bearer ${token}` }, cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
       });
+
       const allResult = await allResponse.json();
-      if (!allResponse.ok) throw new Error(allResult.error || "Unable to load all-time payroll totals.");
+
+      if (!allResponse.ok) {
+        throw new Error(
+          allResult.error || "Unable to load all-time payroll totals.",
+        );
+      }
+
       setAllTimeBatches(allResult.batches || []);
-      if (!locationId && result.locations?.length) setLocationId(String(result.locations[0].id));
+
+      if (!locationId && result.locations?.length) {
+        setLocationId(String(result.locations[0].id));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to load payroll.");
     } finally {
@@ -98,38 +199,290 @@ export default function PayrollPage() {
     }
   }, [getToken, month, locationId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const updateRow = (index: number, field: keyof PayrollRow, value: string) => {
-    setRows(current => current.map((row, i) => {
-      if (i !== index) return row;
-      const next = { ...row, [field]: field === "employee_name" || field === "designation" ? value : Number(value || 0) };
-      return calculate(next);
-    }));
-  };
-  const addRow = () => setRows(current => [...current, blankRow(current.length + 1)]);
-  const removeRow = (index: number) => setRows(current => current.filter((_, i) => i !== index).map((row, i) => ({ ...row, employee_no: i + 1 })));
+  function updateRow(
+    index: number,
+    field: keyof PayrollRow,
+    value: string,
+  ) {
+    setRows((current) =>
+      current.map((row, i) => {
+        if (i !== index) return row;
 
-  const visibleBatches = useMemo(() => batches.filter(batch => filterLocation === "all" || String(batch.location_id) === filterLocation), [batches, filterLocation]);
+        const next = {
+          ...row,
+          [field]:
+            field === "employee_name" ||
+            field === "designation" ||
+            field === "overtime_mode"
+              ? value
+              : Number(value || 0),
+        } as PayrollRow;
+
+        return calculate(next);
+      }),
+    );
+  }
+
+  function addRow() {
+    setRows((current) => [...current, blankRow(current.length + 1)]);
+  }
+
+  function removeRow(index: number) {
+    setRows((current) =>
+      current
+        .filter((_, i) => i !== index)
+        .map((row, i) => ({ ...row, employee_no: i + 1 })),
+    );
+  }
+
+  function startEdit(batch: Batch) {
+    setError("");
+    setMessage("");
+    setEditingBatch(batch);
+    setEditPayDate(batch.pay_date);
+    setEditWeekStart(batch.week_start);
+    setEditWeekEnd(batch.week_end);
+    setEditLocationId(String(batch.location_id));
+    setEditPreparedBy(batch.prepared_by || "");
+    setEditNotes(batch.notes || "");
+
+    setEditRows(
+      (batch.payroll_records || []).map((row, index) =>
+        normalizeRow(row, index + 1),
+      ),
+    );
+  }
+
+  function cancelEdit() {
+    if (updating) return;
+    setEditingBatch(null);
+    setEditRows([]);
+  }
+
+  function updateEditRow(
+    index: number,
+    field: keyof PayrollRow,
+    value: string,
+  ) {
+    setEditRows((current) =>
+      current.map((row, i) => {
+        if (i !== index) return row;
+
+        const next = {
+          ...row,
+          [field]:
+            field === "employee_name" ||
+            field === "designation" ||
+            field === "overtime_mode"
+              ? value
+              : Number(value || 0),
+        } as PayrollRow;
+
+        return calculate(next);
+      }),
+    );
+  }
+
+  function addEditRow() {
+    setEditRows((current) => [
+      ...current,
+      blankRow(current.length + 1),
+    ]);
+  }
+
+  function removeEditRow(index: number) {
+    setEditRows((current) =>
+      current
+        .filter((_, i) => i !== index)
+        .map((row, i) => ({ ...row, employee_no: i + 1 })),
+    );
+  }
+
+  async function saveEdit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!editingBatch) return;
+
+    setError("");
+    setMessage("");
+
+    if (!editPayDate || !editWeekStart || !editWeekEnd) {
+      setError("Complete the pay date and payroll week dates.");
+      return;
+    }
+
+    if (editWeekEnd < editWeekStart) {
+      setError(
+        "Payroll Week End cannot be earlier than Payroll Week Start.",
+      );
+      return;
+    }
+
+    if (!editLocationId) {
+      setError("Select a location.");
+      return;
+    }
+
+    const ready = editRows.filter((row) => row.employee_name.trim());
+
+    if (!ready.length) {
+      setError("Enter at least one employee name.");
+      return;
+    }
+
+    const incompleteRow = editRows.some(
+      (row) =>
+        !row.employee_name.trim() &&
+        (row.designation.trim() ||
+          Number(row.daily_rate) !== 0 ||
+          Number(row.days_worked) !== 0 ||
+          Number(row.overtime_hours) !== 0 ||
+          Number(row.manual_overtime_amount) !== 0),
+    );
+
+    if (incompleteRow) {
+      setError(
+        "Complete or remove employee rows that have details but no employee name.",
+      );
+      return;
+    }
+
+    setUpdating(true);
+
+    try {
+      const token = await getToken();
+
+      const response = await fetch("/api/admin/payroll", {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          id: editingBatch.id,
+          pay_date: editPayDate,
+          week_start: editWeekStart,
+          week_end: editWeekEnd,
+          location_id: Number(editLocationId),
+          prepared_by: editPreparedBy,
+          notes: editNotes,
+          records: ready.map((row, index) => ({
+            ...calculate(row),
+            employee_no: index + 1,
+          })),
+        }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to update payroll.");
+      }
+
+      setEditingBatch(null);
+      setEditRows([]);
+      setMonth(editPayDate.slice(0, 7));
+      setMessage("Payroll batch updated successfully.");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Unable to update payroll.");
+    } finally {
+      setUpdating(false);
+    }
+  }
+
+  const visibleBatches = useMemo(
+    () =>
+      batches.filter(
+        (batch) =>
+          filterLocation === "all" ||
+          String(batch.location_id) === filterLocation,
+      ),
+    [batches, filterLocation],
+  );
+
   const filteredSavedBatches = useMemo(() => {
     const query = searchTerm.trim().toLocaleLowerCase();
-    return visibleBatches.filter(batch => {
+
+    return visibleBatches.filter((batch) => {
       if (!query) return true;
-      const batchFields = [batch.location_name, batch.pay_date, dateLabel(batch.pay_date), batch.week_start, dateLabel(batch.week_start), batch.week_end, dateLabel(batch.week_end)];
-      const batchMatches = batchFields.some(value => String(value || "").toLocaleLowerCase().includes(query));
-      const employeeMatches = (batch.payroll_records || []).some(record => String(record.employee_name || "").toLocaleLowerCase().includes(query));
+
+      const batchFields = [
+        batch.location_name,
+        batch.pay_date,
+        dateLabel(batch.pay_date),
+        batch.week_start,
+        dateLabel(batch.week_start),
+        batch.week_end,
+        dateLabel(batch.week_end),
+      ];
+
+      const batchMatches = batchFields.some((value) =>
+        String(value || "").toLocaleLowerCase().includes(query),
+      );
+
+      const employeeMatches = (batch.payroll_records || []).some((record) =>
+        String(record.employee_name || "")
+          .toLocaleLowerCase()
+          .includes(query),
+      );
+
       return batchMatches || employeeMatches;
     });
   }, [visibleBatches, searchTerm]);
-  const monthTotal = useMemo(() => visibleBatches.reduce((sum, batch) => sum + (batch.payroll_records || []).reduce((s, row) => s + Number(row.net_amount || 0), 0), 0), [visibleBatches]);
-  const monthEmployees = useMemo(() => visibleBatches.reduce((sum, batch) => sum + (batch.payroll_records || []).length, 0), [visibleBatches]);
+
+  const monthTotal = useMemo(
+    () =>
+      visibleBatches.reduce(
+        (sum, batch) =>
+          sum +
+          (batch.payroll_records || []).reduce(
+            (s, row) => s + Number(row.net_amount || 0),
+            0,
+          ),
+        0,
+      ),
+    [visibleBatches],
+  );
+
+  const monthEmployees = useMemo(
+    () =>
+      visibleBatches.reduce(
+        (sum, batch) =>
+          sum + (batch.payroll_records || []).length,
+        0,
+      ),
+    [visibleBatches],
+  );
+
+  const allTimeTotal = useMemo(
+    () =>
+      allTimeBatches.reduce(
+        (sum, batch) =>
+          sum +
+          (batch.payroll_records || []).reduce(
+            (s, row) => s + Number(row.net_amount || 0),
+            0,
+          ),
+        0,
+      ),
+    [allTimeBatches],
+  );
+
   const locationTotals = useMemo(() => {
-    const totals = new Map<number, {
-      name: string;
-      batches: number;
-      employees: number;
-      total: number;
-    }>();
+    const totals = new Map<
+      number,
+      {
+        name: string;
+        batches: number;
+        employees: number;
+        total: number;
+      }
+    >();
 
     for (const batch of visibleBatches) {
       const current = totals.get(batch.location_id) || {
@@ -145,6 +498,7 @@ export default function PayrollPage() {
         (sum, row) => sum + Number(row.net_amount || 0),
         0,
       );
+
       totals.set(batch.location_id, current);
     }
 
@@ -155,24 +509,79 @@ export default function PayrollPage() {
 
   async function savePayroll(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(""); setMessage("");
-    const ready = rows.filter(row => row.employee_name.trim());
-    if (!ready.length) { setError("Enter at least one employee name before saving."); return; }
-    if (!locationId) { setError("Select a location."); return; }
+    setError("");
+    setMessage("");
+
+    const ready = rows.filter((row) => row.employee_name.trim());
+
+    if (!ready.length) {
+      setError("Enter at least one employee name before saving.");
+      return;
+    }
+
+    if (!locationId) {
+      setError("Select a location.");
+      return;
+    }
+
+    if (!payDate || !weekStart || !weekEnd) {
+      setError("Complete the pay date and payroll week dates.");
+      return;
+    }
+
+    if (weekEnd < weekStart) {
+      setError("Payroll Week End cannot be earlier than Payroll Week Start.");
+      return;
+    }
+
+    const incompleteRow = rows.some(
+      (row) =>
+        !row.employee_name.trim() &&
+        (row.designation.trim() ||
+          Number(row.daily_rate) !== 0 ||
+          Number(row.days_worked) !== 0 ||
+          Number(row.overtime_hours) !== 0 ||
+          Number(row.manual_overtime_amount) !== 0),
+    );
+
+    if (incompleteRow) {
+      setError(
+        "Complete or remove employee rows that have details but no employee name.",
+      );
+      return;
+    }
+
     setSaving(true);
+
     try {
       const token = await getToken();
+
       const response = await fetch("/api/admin/payroll", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
-          pay_date: payDate, week_start: weekStart, week_end: weekEnd,
-          location_id: Number(locationId), prepared_by: preparedBy, notes,
-          records: ready.map((row, i) => ({ ...calculate(row), employee_no: i + 1 })),
+          pay_date: payDate,
+          week_start: weekStart,
+          week_end: weekEnd,
+          location_id: Number(locationId),
+          prepared_by: preparedBy,
+          notes,
+          records: ready.map((row, index) => ({
+            ...calculate(row),
+            employee_no: index + 1,
+          })),
         }),
       });
+
       const result = await response.json();
-      if (!response.ok) throw new Error(result.error || "Unable to save payroll.");
+
+      if (!response.ok) {
+        throw new Error(result.error || "Unable to save payroll.");
+      }
+
       setMessage("Payroll batch saved successfully.");
       setRows([blankRow(1), blankRow(2), blankRow(3)]);
       setNotes("");
@@ -198,6 +607,7 @@ export default function PayrollPage() {
 
     try {
       const token = await getToken();
+
       const response = await fetch(
         `/api/admin/payroll?id=${encodeURIComponent(batch.id)}`,
         {
@@ -207,6 +617,7 @@ export default function PayrollPage() {
       );
 
       const result = await response.json();
+
       if (!response.ok) {
         throw new Error(result.error || "Unable to delete payroll.");
       }
@@ -219,7 +630,7 @@ export default function PayrollPage() {
       setDeletingId(null);
     }
   }
- 
+
   async function exportWeekly(batch: Batch) {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "DCYES Finance Management System";
@@ -246,7 +657,6 @@ export default function PayrollPage() {
 
     const navy = "FF17365D";
     const blue = "FF24476B";
-    const lightBlue = "FFD9E7F5";
     const lightGray = "FFF3F6FA";
     const white = "FFFFFFFF";
     const borderColor = "FFD6DEE8";
@@ -258,13 +668,15 @@ export default function PayrollPage() {
       { width: 16 },
       { width: 13 },
       { width: 17 },
+      { width: 13 },
+      { width: 16 },
       { width: 17 },
-      { width: 20 },
+      { width: 17 },
       { width: 18 },
       { width: 22 },
     ];
 
-    sheet.mergeCells("A1:J1");
+    sheet.mergeCells("A1:L1");
     sheet.getCell("A1").value = "DCYES FINANCE MANAGEMENT SYSTEM";
     sheet.getCell("A1").font = {
       name: "Arial",
@@ -283,7 +695,7 @@ export default function PayrollPage() {
     };
     sheet.getRow(1).height = 34;
 
-    sheet.mergeCells("A2:J2");
+    sheet.mergeCells("A2:L2");
     sheet.getCell("A2").value = "WEEKLY PAYROLL REGISTER";
     sheet.getCell("A2").font = {
       name: "Arial",
@@ -297,7 +709,7 @@ export default function PayrollPage() {
     };
     sheet.getRow(2).height = 27;
 
-    sheet.mergeCells("A3:J3");
+    sheet.mergeCells("A3:L3");
     sheet.getCell("A3").value =
       `Location: ${batch.location_name}  |  Pay Date: ${dateLabel(batch.pay_date)}`;
     sheet.getCell("A3").font = {
@@ -312,7 +724,7 @@ export default function PayrollPage() {
     };
     sheet.getRow(3).height = 23;
 
-    sheet.mergeCells("A4:J4");
+    sheet.mergeCells("A4:L4");
     sheet.getCell("A4").value =
       `Payroll Week: ${dateLabel(batch.week_start)} - ${dateLabel(batch.week_end)}`;
     sheet.getCell("A4").font = {
@@ -327,7 +739,7 @@ export default function PayrollPage() {
     };
     sheet.getRow(4).height = 22;
 
-    const headers = [
+    sheet.addRow([
       "No.",
       "Employee Name",
       "Designation",
@@ -335,12 +747,13 @@ export default function PayrollPage() {
       "Days Worked",
       "Total Pay",
       "OT Hours",
+      "OT Pay Mode",
+      "Manual OT Pay",
       "OT Amount",
       "Net Amount",
       "Employee Signature",
-    ];
+    ]);
 
-    sheet.addRow(headers);
     const headerRow = sheet.getRow(5);
     headerRow.height = 34;
     headerRow.font = {
@@ -362,7 +775,9 @@ export default function PayrollPage() {
 
     const records = batch.payroll_records || [];
 
-    records.forEach((record, index) => {
+    records.forEach((rawRecord, index) => {
+      const record = normalizeRow(rawRecord, index + 1);
+
       const row = sheet.addRow([
         index + 1,
         record.employee_name,
@@ -371,6 +786,10 @@ export default function PayrollPage() {
         Number(record.days_worked || 0),
         Number(record.total_pay || 0),
         Number(record.overtime_hours || 0),
+        record.overtime_mode === "manual" ? "Manual" : "Automatic",
+        record.overtime_mode === "manual"
+          ? Number(record.manual_overtime_amount || 0)
+          : 0,
         Number(record.overtime_total || 0),
         Number(record.net_amount || 0),
         "",
@@ -378,10 +797,7 @@ export default function PayrollPage() {
 
       row.height = 25;
       row.font = { name: "Arial", size: 10 };
-      row.alignment = {
-        vertical: "middle",
-        wrapText: true,
-      };
+      row.alignment = { vertical: "middle", wrapText: true };
 
       if (index % 2 === 1) {
         row.eachCell((cell) => {
@@ -397,19 +813,25 @@ export default function PayrollPage() {
         horizontal: "center",
         vertical: "middle",
       };
-      row.getCell(4).numFmt = '"₱"#,##0.00';
-      row.getCell(5).numFmt = "0.00";
-      row.getCell(7).numFmt = "0.00";
-      row.getCell(6).numFmt = '"₱"#,##0.00';
-      row.getCell(8).numFmt = '"₱"#,##0.00';
-      row.getCell(9).numFmt = '"₱"#,##0.00';
-      row.getCell(10).alignment = {
-        horizontal: "center",
-        vertical: "middle",
-      };
+
+      [4, 6, 9, 10, 11].forEach((column) => {
+        row.getCell(column).numFmt = currencyFormat;
+      });
+
+      [5, 7].forEach((column) => {
+        row.getCell(column).numFmt = "0.00";
+      });
+
+      [8, 12].forEach((column) => {
+        row.getCell(column).alignment = {
+          horizontal: "center",
+          vertical: "middle",
+        };
+      });
     });
 
     const totalRowNumber = sheet.rowCount + 1;
+
     const totalRow = sheet.addRow([
       "",
       "TOTAL PAYROLL",
@@ -418,8 +840,10 @@ export default function PayrollPage() {
       "",
       { formula: `SUM(F6:F${totalRowNumber - 1})` },
       "",
-      { formula: `SUM(H6:H${totalRowNumber - 1})` },
+      "",
       { formula: `SUM(I6:I${totalRowNumber - 1})` },
+      { formula: `SUM(J6:J${totalRowNumber - 1})` },
+      { formula: `SUM(K6:K${totalRowNumber - 1})` },
       "",
     ]);
 
@@ -430,6 +854,7 @@ export default function PayrollPage() {
       bold: true,
       color: { argb: white },
     };
+
     totalRow.eachCell((cell) => {
       cell.fill = {
         type: "pattern",
@@ -446,11 +871,10 @@ export default function PayrollPage() {
       };
     });
 
-    [6, 8, 9].forEach((columnNumber) => {
-      totalRow.getCell(columnNumber).numFmt = '"₱"#,##0.00';
+    [6, 9, 10, 11].forEach((column) => {
+      totalRow.getCell(column).numFmt = currencyFormat;
     });
 
-    // Apply consistent borders to the entire payroll table.
     for (let rowNumber = 5; rowNumber <= sheet.rowCount; rowNumber++) {
       sheet.getRow(rowNumber).eachCell((cell) => {
         cell.border = {
@@ -462,7 +886,6 @@ export default function PayrollPage() {
       });
     }
 
-    // Restore the highlighted total row after applying table borders.
     totalRow.eachCell((cell) => {
       cell.fill = {
         type: "pattern",
@@ -478,7 +901,7 @@ export default function PayrollPage() {
     });
 
     const notesRow = sheet.rowCount + 2;
-    sheet.mergeCells(`A${notesRow}:J${notesRow}`);
+    sheet.mergeCells(`A${notesRow}:L${notesRow}`);
     sheet.getCell(`A${notesRow}`).value =
       "Prepared payroll record. Please verify all amounts before approval and payment.";
     sheet.getCell(`A${notesRow}`).font = {
@@ -497,10 +920,9 @@ export default function PayrollPage() {
     sheet.views = [{ state: "frozen", ySplit: 5 }];
     sheet.autoFilter = {
       from: "A5",
-      to: `J${Math.max(5, totalRowNumber - 1)}`,
+      to: `L${Math.max(5, totalRowNumber - 1)}`,
     };
-
-    sheet.pageSetup.printArea = `A1:J${notesRow}`;
+    sheet.pageSetup.printArea = `A1:L${notesRow}`;
     sheet.pageSetup.horizontalCentered = true;
     sheet.headerFooter.oddFooter =
       "&LDCYES Finance Management System&CWeekly Payroll&RPage &P of &N";
@@ -511,29 +933,26 @@ export default function PayrollPage() {
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
+
     a.href = url;
-    a.download =
-      `Weekly-Payroll-${batch.location_name.replace(/[^a-z0-9-_]/gi, "_")}-${batch.pay_date}.xlsx`;
+    a.download = `Weekly-Payroll-${batch.location_name.replace(/[^a-z0-9-_]/gi, "_")}-${batch.pay_date}.xlsx`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
   }
 
-
   async function exportMonthly() {
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "Jrose";
+    workbook.creator = "DCYES Finance Management System";
     workbook.subject = "Monthly Payroll Report";
     workbook.created = new Date();
 
     const navy = "FF17365D";
     const blue = "FF24476B";
-    const lightBlue = "FFD9E7F5";
     const lightGray = "FFF3F6FA";
     const white = "FFFFFFFF";
     const borderColor = "FFD9E2F3";
-    const currencyFormat = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
 
     function styleTitle(
       sheet: ExcelJS.Worksheet,
@@ -579,6 +998,7 @@ export default function PayrollPage() {
 
     function styleHeader(row: ExcelJS.Row) {
       row.height = 34;
+
       row.eachCell((cell) => {
         cell.font = {
           name: "Arial",
@@ -606,7 +1026,11 @@ export default function PayrollPage() {
     }
 
     function styleBody(sheet: ExcelJS.Worksheet, startRow: number) {
-      for (let rowNumber = startRow; rowNumber <= sheet.rowCount; rowNumber++) {
+      for (
+        let rowNumber = startRow;
+        rowNumber <= sheet.rowCount;
+        rowNumber++
+      ) {
         const row = sheet.getRow(rowNumber);
         row.height = 24;
 
@@ -637,6 +1061,7 @@ export default function PayrollPage() {
 
     // SHEET 1: MONTHLY SUMMARY
     const summary = workbook.addWorksheet("Monthly Summary");
+
     summary.columns = [
       { header: "Location", key: "location", width: 30 },
       { header: "Payroll Batches", key: "batches", width: 19 },
@@ -673,6 +1098,7 @@ export default function PayrollPage() {
         (sum, record) => sum + Number(record.net_amount || 0),
         0,
       );
+
       groups.set(batch.location_name, current);
     }
 
@@ -720,20 +1146,19 @@ export default function PayrollPage() {
         top: { style: "medium", color: { argb: navy } },
       };
     });
+
     summaryTotalRow.getCell(4).numFmt = currencyFormat;
     summaryTotalRow.getCell(4).alignment = {
       horizontal: "right",
       vertical: "middle",
     };
 
-    summary.autoFilter = {
-      from: "A4",
-      to: "D4",
-    };
+    summary.autoFilter = { from: "A4", to: "D4" };
     summary.views = [{ state: "frozen", ySplit: 4 }];
 
     // SHEET 2: PAYROLL DETAILS
     const detail = workbook.addWorksheet("Payroll Details");
+
     detail.columns = [
       { header: "Pay Date", key: "payDate", width: 15 },
       { header: "Week Start", key: "weekStart", width: 15 },
@@ -745,6 +1170,8 @@ export default function PayrollPage() {
       { header: "Days Worked", key: "days", width: 13 },
       { header: "Total Pay", key: "pay", width: 17 },
       { header: "OT Hours", key: "hours", width: 13 },
+      { header: "OT Pay Mode", key: "mode", width: 16 },
+      { header: "Manual OT Pay", key: "manualOT", width: 17 },
       { header: "OT Total", key: "overtime", width: 17 },
       { header: "Net Amount", key: "net", width: 18 },
     ];
@@ -752,7 +1179,7 @@ export default function PayrollPage() {
     styleTitle(
       detail,
       "MONTHLY PAYROLL DETAILS",
-      12,
+      14,
       `Payroll Month: ${month} | All figures in Philippine pesos (PHP)`,
     );
 
@@ -761,7 +1188,12 @@ export default function PayrollPage() {
     styleHeader(detail.getRow(4));
 
     for (const batch of visibleBatches) {
-      for (const record of batch.payroll_records || []) {
+      for (const rawRecord of batch.payroll_records || []) {
+        const record = normalizeRow(
+          rawRecord,
+          rawRecord.employee_no || 0,
+        );
+
         detail.addRow([
           batch.pay_date,
           batch.week_start,
@@ -773,6 +1205,10 @@ export default function PayrollPage() {
           Number(record.days_worked || 0),
           Number(record.total_pay || 0),
           Number(record.overtime_hours || 0),
+          record.overtime_mode === "manual" ? "Manual" : "Automatic",
+          record.overtime_mode === "manual"
+            ? Number(record.manual_overtime_amount || 0)
+            : 0,
           Number(record.overtime_total || 0),
           Number(record.net_amount || 0),
         ]);
@@ -782,7 +1218,7 @@ export default function PayrollPage() {
     styleBody(detail, 5);
 
     for (let rowNumber = 5; rowNumber <= detail.rowCount; rowNumber++) {
-      [7, 9, 11, 12].forEach((column) => {
+      [7, 9, 12, 13, 14].forEach((column) => {
         detail.getCell(rowNumber, column).numFmt = currencyFormat;
         detail.getCell(rowNumber, column).alignment = {
           horizontal: "right",
@@ -790,13 +1226,15 @@ export default function PayrollPage() {
         };
       });
 
-      [1, 2, 3, 8, 10].forEach((column) => {
+      [1, 2, 3, 8, 10, 11].forEach((column) => {
         detail.getCell(rowNumber, column).alignment = {
           horizontal: "center",
           vertical: "middle",
         };
       });
     }
+
+    const lastDetailDataRow = Math.max(4, detail.rowCount);
 
     const detailTotalRow = detail.addRow([
       "",
@@ -807,10 +1245,12 @@ export default function PayrollPage() {
       "GRAND TOTAL",
       "",
       "",
-      { formula: `SUM(I5:I${Math.max(4, detail.rowCount)})` },
+      { formula: `SUM(I5:I${lastDetailDataRow})` },
       "",
-      { formula: `SUM(K5:K${Math.max(4, detail.rowCount)})` },
-      { formula: `SUM(L5:L${Math.max(4, detail.rowCount)})` },
+      "",
+      { formula: `SUM(L5:L${lastDetailDataRow})` },
+      { formula: `SUM(M5:M${lastDetailDataRow})` },
+      { formula: `SUM(N5:N${lastDetailDataRow})` },
     ]);
 
     detailTotalRow.height = 30;
@@ -829,7 +1269,7 @@ export default function PayrollPage() {
       cell.alignment = { vertical: "middle" };
     });
 
-    [9, 11, 12].forEach((column) => {
+    [9, 12, 13, 14].forEach((column) => {
       detailTotalRow.getCell(column).numFmt = currencyFormat;
       detailTotalRow.getCell(column).alignment = {
         horizontal: "right",
@@ -837,13 +1277,9 @@ export default function PayrollPage() {
       };
     });
 
-    detail.autoFilter = {
-      from: "A4",
-      to: "L4",
-    };
+    detail.autoFilter = { from: "A4", to: "N4" };
     detail.views = [{ state: "frozen", ySplit: 4 }];
 
-    // PRINT SETTINGS
     for (const sheet of [summary, detail]) {
       sheet.pageSetup = {
         paperSize: 9,
@@ -860,10 +1296,14 @@ export default function PayrollPage() {
           footer: 0.2,
         },
       };
+
       sheet.eachRow((row) => {
         row.eachCell((cell) => {
           if (!cell.alignment) {
-            cell.alignment = { vertical: "middle", wrapText: true };
+            cell.alignment = {
+              vertical: "middle",
+              wrapText: true,
+            };
           }
         });
       });
@@ -875,6 +1315,7 @@ export default function PayrollPage() {
     });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
+
     a.href = url;
     a.download = `Monthly-Payroll-${month}.xlsx`;
     document.body.appendChild(a);
@@ -883,32 +1324,88 @@ export default function PayrollPage() {
     URL.revokeObjectURL(url);
   }
 
-
   return (
     <div className="flex min-h-screen bg-slate-100">
       <Sidebar />
+
       <main className="min-w-0 flex-1 p-4 md:p-8">
         <div className="mx-auto max-w-7xl space-y-6">
           <header className="flex flex-wrap items-start justify-between gap-3">
-            <div><h1 className="text-3xl font-bold text-slate-900">Payroll</h1><p className="mt-1 text-sm text-slate-600">Weekly payroll batches and monthly payroll totals by pay date.</p></div>
-            <button type="button" onClick={() => void load()} className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Refresh</button>
+            <div>
+              <h1 className="text-3xl font-bold text-slate-900">Payroll</h1>
+              <p className="mt-1 text-sm text-slate-600">
+                Weekly payroll batches and monthly payroll totals by pay date.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => void load()}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              Refresh
+            </button>
           </header>
 
-          {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-          {message && <div role="status" className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800">{message}</div>}
+          {error && (
+            <div
+              role="alert"
+              className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+            >
+              {error}
+            </div>
+          )}
+
+          {message && (
+            <div
+              role="status"
+              className="rounded-lg border border-green-200 bg-green-50 p-3 text-sm text-green-800"
+            >
+              {message}
+            </div>
+          )}
 
           <section className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">Monthly Total Payroll· {month}</p><p className="mt-2 text-2xl font-bold text-slate-900">{money(monthTotal)}</p><p className="mt-1 text-xs text-slate-500">{monthEmployees} employee rows across {visibleBatches.length} batches</p></div>
-            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm"><p className="text-sm text-slate-500">Grand Total Payroll· all saved batches</p><p className="mt-2 text-2xl font-bold text-slate-900">{money(allTimeBatches.reduce((sum, batch) => sum + (batch.payroll_records || []).reduce((s, row) => s + Number(row.net_amount || 0), 0), 0))}</p><p className="mt-1 text-xs text-slate-500">The monthly list is filtered by pay date.</p></div>
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">
+                Monthly Total Payroll · {month}
+              </p>
+              <p className="mt-2 text-2xl font-bold text-slate-900">
+                {money(monthTotal)}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {monthEmployees} employee rows across {visibleBatches.length}{" "}
+                batches
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <p className="text-sm text-slate-500">
+                Grand Total Payroll · all saved batches
+              </p>
+              <p className="mt-2 text-2xl font-bold text-slate-900">
+                {money(allTimeTotal)}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                The monthly list is filtered by pay date.
+              </p>
+            </div>
           </section>
 
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="mb-4">
-              <h2 className="text-xl font-bold text-slate-900">Payroll Totals by Location</h2>
-              <p className="mt-1 text-sm text-slate-500">Monthly payroll breakdown for {month}</p>
+              <h2 className="text-xl font-bold text-slate-900">
+                Payroll Totals by Location
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Monthly payroll breakdown for {month}
+              </p>
             </div>
+
             {locationTotals.length === 0 ? (
-              <p className="py-4 text-sm text-slate-500">No payroll totals for this month.</p>
+              <p className="py-4 text-sm text-slate-500">
+                No payroll totals for this month.
+              </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[600px] text-left text-sm">
@@ -917,77 +1414,871 @@ export default function PayrollPage() {
                       <th className="px-3 py-3">Location</th>
                       <th className="px-3 py-3">Batches</th>
                       <th className="px-3 py-3">Employees</th>
-                      <th className="px-3 py-3 text-right">Total Net Payroll</th>
+                      <th className="px-3 py-3 text-right">
+                        Total Net Payroll
+                      </th>
                     </tr>
                   </thead>
+
                   <tbody>
                     {locationTotals.map((item) => (
                       <tr key={item.name} className="border-t border-slate-100">
                         <td className="px-3 py-3 font-medium">{item.name}</td>
                         <td className="px-3 py-3">{item.batches}</td>
                         <td className="px-3 py-3">{item.employees}</td>
-                        <td className="px-3 py-3 text-right font-semibold">{money(item.total)}</td>
+                        <td className="px-3 py-3 text-right font-semibold">
+                          {money(item.total)}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
+
                   <tfoot className="border-t-2 border-slate-200 bg-slate-50 font-bold">
                     <tr>
                       <td className="px-3 py-3">Grand Total</td>
                       <td className="px-3 py-3">{visibleBatches.length}</td>
                       <td className="px-3 py-3">{monthEmployees}</td>
-                      <td className="px-3 py-3 text-right">{money(monthTotal)}</td>
+                      <td className="px-3 py-3 text-right">
+                        {money(monthTotal)}
+                      </td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
             )}
           </section>
-          <form onSubmit={savePayroll} className="space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div><h2 className="text-xl font-bold text-slate-900">Create Weekly Payroll</h2><p className="mt-1 text-sm text-slate-500">Check employee details and totals before saving.</p></div>
+
+          <form
+            onSubmit={savePayroll}
+            className="space-y-5 rounded-xl border border-slate-200 bg-white p-5 shadow-sm"
+          >
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">
+                Create Weekly Payroll
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Check employee details and totals before saving.
+              </p>
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <label className="text-sm font-medium text-slate-700">Location<select value={locationId} onChange={e => setLocationId(e.target.value)} required className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"><option value="">Select location</option>{locations.map(location => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-              <label className="text-sm font-medium text-slate-700">Pay Date<input type="date" value={payDate} onChange={e => setPayDate(e.target.value)} required className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5" /></label>
-              <label className="text-sm font-medium text-slate-700">Prepared By<input value={preparedBy} onChange={e => setPreparedBy(e.target.value)} placeholder="Name of preparer" className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5" /></label>
-              <label className="text-sm font-medium text-slate-700">Payroll Week Start<input type="date" value={weekStart} onChange={e => setWeekStart(e.target.value)} required className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5" /></label>
-              <label className="text-sm font-medium text-slate-700">Payroll Week End<input type="date" value={weekEnd} min={weekStart} onChange={e => setWeekEnd(e.target.value)} required className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5" /></label>
-              <label className="text-sm font-medium text-slate-700">Notes<input value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional notes" className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5" /></label>
+              <label className="text-sm font-medium text-slate-700">
+                Location
+                <select
+                  value={locationId}
+                  onChange={(e) => setLocationId(e.target.value)}
+                  required
+                  className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                >
+                  <option value="">Select location</option>
+                  {locations.map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="text-sm font-medium text-slate-700">
+                Pay Date
+                <input
+                  type="date"
+                  value={payDate}
+                  onChange={(e) => setPayDate(e.target.value)}
+                  required
+                  className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                />
+              </label>
+
+              <label className="text-sm font-medium text-slate-700">
+                Prepared By
+                <input
+                  value={preparedBy}
+                  onChange={(e) => setPreparedBy(e.target.value)}
+                  placeholder="Name of preparer"
+                  className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                />
+              </label>
+
+              <label className="text-sm font-medium text-slate-700">
+                Payroll Week Start
+                <input
+                  type="date"
+                  value={weekStart}
+                  onChange={(e) => setWeekStart(e.target.value)}
+                  required
+                  className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                />
+              </label>
+
+              <label className="text-sm font-medium text-slate-700">
+                Payroll Week End
+                <input
+                  type="date"
+                  value={weekEnd}
+                  min={weekStart}
+                  onChange={(e) => setWeekEnd(e.target.value)}
+                  required
+                  className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                />
+              </label>
+
+              <label className="text-sm font-medium text-slate-700">
+                Notes
+                <input
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="Optional notes"
+                  className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                />
+              </label>
             </div>
 
             <div className="overflow-x-auto rounded-lg border border-slate-200">
-              <table className="min-w-[1120px] w-full text-left text-sm">
-                <thead className="bg-slate-50 text-xs uppercase text-slate-600"><tr>{["No.", "Employee Name", "Designation", "Rate per Day", "No. of Days", "Total Pay", "OT Hours", "Total of Overtime", "Net Amount", ""].map((heading, i) => <th key={`${heading}-${i}`} className="px-3 py-3">{heading}</th>)}</tr></thead>
-                <tbody>{rows.map((row, index) => <tr key={index} className="border-t border-slate-100">
-                  <td className="px-3 py-2">{index + 1}</td>
-                  <td className="px-2 py-2"><input value={row.employee_name} onChange={e => updateRow(index, "employee_name", e.target.value)} aria-label={`Employee name row ${index + 1}`} placeholder="Employee name" className="w-48 rounded border border-slate-300 p-2" /></td>
-                  <td className="px-2 py-2"><input value={row.designation} onChange={e => updateRow(index, "designation", e.target.value)} aria-label={`Designation row ${index + 1}`} placeholder="Designation" className="w-36 rounded border border-slate-300 p-2" /></td>
-                  <td className="px-2 py-2"><input type="number" min="0" step="0.01" value={row.daily_rate} onChange={e => updateRow(index, "daily_rate", e.target.value)} className="w-28 rounded border border-slate-300 p-2" /></td>
-                  <td className="px-2 py-2"><input type="number" min="0" max="31" step="0.25" value={row.days_worked} onChange={e => updateRow(index, "days_worked", e.target.value)} className="w-24 rounded border border-slate-300 p-2" /></td>
-                  <td className="px-3 py-2 whitespace-nowrap">{money(row.total_pay)}</td>
-                  <td className="px-2 py-2"><input type="number" min="0" max="500" step="0.25" value={row.overtime_hours} onChange={e => updateRow(index, "overtime_hours", e.target.value)} className="w-24 rounded border border-slate-300 p-2" /></td>
-                  <td className="px-3 py-2 whitespace-nowrap">{money(row.overtime_total)}</td>
-                  <td className="px-3 py-2 whitespace-nowrap font-semibold">{money(row.net_amount)}</td>
-                  <td className="px-2 py-2"><button type="button" onClick={() => removeRow(index)} disabled={rows.length === 1} className="rounded px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-30">Remove</button></td>
-                </tr>)}</tbody>
-                <tfoot className="bg-slate-50 font-semibold"><tr><td colSpan={5} className="px-3 py-3 text-right">Batch Total</td><td className="px-3 py-3">{money(rows.reduce((s, row) => s + row.total_pay, 0))}</td><td></td><td className="px-3 py-3">{money(rows.reduce((s, row) => s + row.overtime_total, 0))}</td><td className="px-3 py-3">{money(rows.reduce((s, row) => s + row.net_amount, 0))}</td><td></td></tr></tfoot>
+              <table className="w-full min-w-[1450px] text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase text-slate-600">
+                  <tr>
+                    {[
+                      "No.",
+                      "Employee Name",
+                      "Designation",
+                      "Rate per Day",
+                      "No. of Days",
+                      "Total Pay",
+                      "OT Hours",
+                      "OT Pay Mode",
+                      "Manual OT Pay",
+                      "Total of Overtime",
+                      "Net Amount",
+                      "",
+                    ].map((heading, i) => (
+                      <th key={`${heading}-${i}`} className="px-3 py-3">
+                        {heading}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {rows.map((row, index) => (
+                    <tr key={index} className="border-t border-slate-100">
+                      <td className="px-3 py-2">{index + 1}</td>
+
+                      <td className="px-2 py-2">
+                        <input
+                          value={row.employee_name}
+                          onChange={(e) =>
+                            updateRow(index, "employee_name", e.target.value)
+                          }
+                          aria-label={`Employee name row ${index + 1}`}
+                          placeholder="Employee name"
+                          className="w-48 rounded border border-slate-300 p-2"
+                        />
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <input
+                          value={row.designation}
+                          onChange={(e) =>
+                            updateRow(index, "designation", e.target.value)
+                          }
+                          aria-label={`Designation row ${index + 1}`}
+                          placeholder="Designation"
+                          className="w-36 rounded border border-slate-300 p-2"
+                        />
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={row.daily_rate}
+                          onChange={(e) =>
+                            updateRow(index, "daily_rate", e.target.value)
+                          }
+                          className="w-28 rounded border border-slate-300 p-2"
+                        />
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max="31"
+                          step="0.25"
+                          value={row.days_worked}
+                          onChange={(e) =>
+                            updateRow(index, "days_worked", e.target.value)
+                          }
+                          className="w-24 rounded border border-slate-300 p-2"
+                        />
+                      </td>
+
+                      <td className="whitespace-nowrap px-3 py-2">
+                        {money(row.total_pay)}
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          max="500"
+                          step="0.25"
+                          value={row.overtime_hours}
+                          onChange={(e) =>
+                            updateRow(index, "overtime_hours", e.target.value)
+                          }
+                          className="w-24 rounded border border-slate-300 p-2"
+                        />
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <select
+                          value={row.overtime_mode}
+                          onChange={(e) =>
+                            updateRow(index, "overtime_mode", e.target.value)
+                          }
+                          className="w-32 rounded border border-slate-300 p-2"
+                        >
+                          <option value="automatic">Automatic</option>
+                          <option value="manual">Manual</option>
+                        </select>
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={row.manual_overtime_amount}
+                          onChange={(e) =>
+                            updateRow(
+                              index,
+                              "manual_overtime_amount",
+                              e.target.value,
+                            )
+                          }
+                          disabled={row.overtime_mode !== "manual"}
+                          placeholder="Manual amount"
+                          className="w-32 rounded border border-slate-300 p-2 disabled:bg-slate-100 disabled:text-slate-400"
+                        />
+                      </td>
+
+                      <td className="whitespace-nowrap px-3 py-2">
+                        {money(row.overtime_total)}
+                      </td>
+
+                      <td className="whitespace-nowrap px-3 py-2 font-semibold">
+                        {money(row.net_amount)}
+                      </td>
+
+                      <td className="px-2 py-2">
+                        <button
+                          type="button"
+                          onClick={() => removeRow(index)}
+                          disabled={rows.length === 1}
+                          className="rounded px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-30"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+
+                <tfoot className="bg-slate-50 font-semibold">
+                  <tr>
+                    <td colSpan={5} className="px-3 py-3 text-right">
+                      Batch Total
+                    </td>
+                    <td className="px-3 py-3">
+                      {money(rows.reduce((s, row) => s + row.total_pay, 0))}
+                    </td>
+                    <td />
+                    <td />
+                    <td className="px-3 py-3">
+                      {money(
+                        rows.reduce(
+                          (s, row) =>
+                            s +
+                            (row.overtime_mode === "manual"
+                              ? row.manual_overtime_amount
+                              : 0),
+                          0,
+                        ),
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {money(
+                        rows.reduce((s, row) => s + row.overtime_total, 0),
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {money(rows.reduce((s, row) => s + row.net_amount, 0))}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
               </table>
             </div>
-            <div className="flex flex-wrap gap-3"><button type="button" onClick={addRow} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">+ Add Employee</button><button type="submit" disabled={saving || loading} className="rounded-lg bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50">{saving ? "Saving..." : "Save Payroll Batch"}</button></div>
+
+            <p className="text-xs text-slate-500">
+              Automatic OT Pay = (Daily Rate ÷ 8) × OT Hours. Manual OT Pay
+              uses the amount entered in the Manual OT Pay field. Net Amount =
+              Total Pay + OT Pay. No deductions or OT multiplier are applied.
+            </p>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={addRow}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                + Add Employee
+              </button>
+
+              <button
+                type="submit"
+                disabled={saving || loading}
+                className="rounded-lg bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+              >
+                {saving ? "Saving..." : "Save Payroll Batch"}
+              </button>
+            </div>
           </form>
 
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex flex-wrap items-end justify-between gap-3">
-              <div><h2 className="text-xl font-bold text-slate-900">Saved Payroll</h2><p className="mt-1 text-sm text-slate-500">Monthly report uses each batch's pay date.</p></div>
+              <div>
+                <h2 className="text-xl font-bold text-slate-900">
+                  Saved Payroll
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Monthly report uses each batch&apos;s pay date.
+                </p>
+              </div>
+
               <div className="flex flex-wrap gap-3">
-                <label className="text-sm text-slate-600">Month<input type="month" value={month} onChange={e => setMonth(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 p-2" /></label>
-                <label className="text-sm text-slate-600">Location<select value={filterLocation} onChange={e => setFilterLocation(e.target.value)} className="mt-1 block rounded-lg border border-slate-300 p-2"><option value="all">All locations</option>{locations.map(location => <option key={location.id} value={location.id}>{location.name}</option>)}</select></label>
-                <label className="text-sm text-slate-600">Search payroll<input type="search" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Employee, location, week, or pay date" className="mt-1 block w-full min-w-64 rounded-lg border border-slate-300 p-2" /></label>
-                <button type="button" onClick={() => void exportMonthly()} disabled={!visibleBatches.length} className="self-end rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40">Export Monthly Excel</button>
+                <label className="text-sm text-slate-600">
+                  Month
+                  <input
+                    type="month"
+                    value={month}
+                    onChange={(e) => setMonth(e.target.value)}
+                    className="mt-1 block rounded-lg border border-slate-300 p-2"
+                  />
+                </label>
+
+                <label className="text-sm text-slate-600">
+                  Location
+                  <select
+                    value={filterLocation}
+                    onChange={(e) => setFilterLocation(e.target.value)}
+                    className="mt-1 block rounded-lg border border-slate-300 p-2"
+                  >
+                    <option value="all">All locations</option>
+                    {locations.map((location) => (
+                      <option key={location.id} value={location.id}>
+                        {location.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="text-sm text-slate-600">
+                  Search payroll
+                  <input
+                    type="search"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                    placeholder="Employee, location, week, or pay date"
+                    className="mt-1 block w-full min-w-64 rounded-lg border border-slate-300 p-2"
+                  />
+                </label>
+
+                <button
+                  type="button"
+                  onClick={() => void exportMonthly()}
+                  disabled={!visibleBatches.length}
+                  className="self-end rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 disabled:opacity-40"
+                >
+                  Export Monthly Excel
+                </button>
               </div>
             </div>
-            {loading ? <p className="py-8 text-sm text-slate-500">Loading payroll</p> : !visibleBatches.length ? <p className="py-8 text-sm text-slate-500">No payroll batches found for this month and location.</p> : !filteredSavedBatches.length ? <p className="py-8 text-sm text-slate-500">No payroll records match your search.</p> :
-              <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[850px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-600"><tr><th className="px-3 py-3">Pay Date</th><th className="px-3 py-3">Payroll Week</th><th className="px-3 py-3">Location</th><th className="px-3 py-3">Employees</th><th className="px-3 py-3">Net Payroll</th><th className="px-3 py-3">Excel</th><th className="px-3 py-3">Actions</th></tr></thead><tbody>{filteredSavedBatches.map(batch => <tr key={batch.id} className="border-t border-slate-100"><td className="px-3 py-3">{dateLabel(batch.pay_date)}</td><td className="px-3 py-3">{dateLabel(batch.week_start)} “ {dateLabel(batch.week_end)}</td><td className="px-3 py-3">{batch.location_name}</td><td className="px-3 py-3">{(batch.payroll_records || []).length}</td><td className="px-3 py-3 font-semibold">{money((batch.payroll_records || []).reduce((s, row) => s + Number(row.net_amount || 0), 0))}</td><td className="px-3 py-3"><button type="button" onClick={() => void exportWeekly(batch)} className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-50">Export .xlsx</button></td><td className="px-3 py-3"><button type="button" onClick={() => void deletePayroll(batch)} disabled={deletingId !== null} className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50">{deletingId === batch.id ? "Deleting..." : "Delete"}</button></td></tr>)}</tbody></table></div>}
+
+            {loading ? (
+              <p className="py-8 text-sm text-slate-500">Loading payroll</p>
+            ) : !visibleBatches.length ? (
+              <p className="py-8 text-sm text-slate-500">
+                No payroll batches found for this month and location.
+              </p>
+            ) : !filteredSavedBatches.length ? (
+              <p className="py-8 text-sm text-slate-500">
+                No payroll records match your search.
+              </p>
+            ) : (
+              <div className="mt-4 overflow-x-auto">
+                <table className="w-full min-w-[850px] text-left text-sm">
+                  <thead className="bg-slate-50 text-xs uppercase text-slate-600">
+                    <tr>
+                      <th className="px-3 py-3">Pay Date</th>
+                      <th className="px-3 py-3">Payroll Week</th>
+                      <th className="px-3 py-3">Location</th>
+                      <th className="px-3 py-3">Employees</th>
+                      <th className="px-3 py-3">Net Payroll</th>
+                      <th className="px-3 py-3">Excel</th>
+                      <th className="px-3 py-3">Actions</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {filteredSavedBatches.map((batch) => (
+                      <tr
+                        key={batch.id}
+                        className="border-t border-slate-100"
+                      >
+                        <td className="px-3 py-3">
+                          {dateLabel(batch.pay_date)}
+                        </td>
+                        <td className="px-3 py-3">
+                          {dateLabel(batch.week_start)} –{" "}
+                          {dateLabel(batch.week_end)}
+                        </td>
+                        <td className="px-3 py-3">{batch.location_name}</td>
+                        <td className="px-3 py-3">
+                          {(batch.payroll_records || []).length}
+                        </td>
+                        <td className="px-3 py-3 font-semibold">
+                          {money(
+                            (batch.payroll_records || []).reduce(
+                              (s, row) => s + Number(row.net_amount || 0),
+                              0,
+                            ),
+                          )}
+                        </td>
+                        <td className="px-3 py-3">
+                          <button
+                            type="button"
+                            onClick={() => void exportWeekly(batch)}
+                            className="rounded border border-slate-300 px-3 py-1.5 hover:bg-slate-50"
+                          >
+                            Export .xlsx
+                          </button>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => startEdit(batch)}
+                              disabled={deletingId !== null || updating}
+                              className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                            >
+                              Edit
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => void deletePayroll(batch)}
+                              disabled={deletingId !== null || updating}
+                              className="rounded-lg border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-50"
+                            >
+                              {deletingId === batch.id
+                                ? "Deleting..."
+                                : "Delete"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
-          <p className="text-xs text-slate-500">OT calculation: daily rate Ã· 8 Ã— OT hours. Net amount: total pay + overtime. No deductions or OT multiplier are applied.</p>
+
+          {editingBatch && (
+            <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 p-3 sm:p-6">
+              <div className="mx-auto my-4 w-full max-w-7xl rounded-xl bg-white p-5 shadow-xl sm:p-6">
+                <form onSubmit={saveEdit} className="space-y-5">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900">
+                        Edit Payroll Batch
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        Update this saved batch. Changes will apply to the
+                        existing payroll record.
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={cancelEdit}
+                      disabled={updating}
+                      className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    <label className="text-sm font-medium text-slate-700">
+                      Location
+                      <select
+                        value={editLocationId}
+                        onChange={(e) => setEditLocationId(e.target.value)}
+                        required
+                        className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                      >
+                        <option value="">Select location</option>
+                        {locations.map((location) => (
+                          <option key={location.id} value={location.id}>
+                            {location.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="text-sm font-medium text-slate-700">
+                      Pay Date
+                      <input
+                        type="date"
+                        value={editPayDate}
+                        onChange={(e) => setEditPayDate(e.target.value)}
+                        required
+                        className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                      />
+                    </label>
+
+                    <label className="text-sm font-medium text-slate-700">
+                      Prepared By
+                      <input
+                        value={editPreparedBy}
+                        onChange={(e) => setEditPreparedBy(e.target.value)}
+                        placeholder="Name of preparer"
+                        className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                      />
+                    </label>
+
+                    <label className="text-sm font-medium text-slate-700">
+                      Payroll Week Start
+                      <input
+                        type="date"
+                        value={editWeekStart}
+                        onChange={(e) => setEditWeekStart(e.target.value)}
+                        required
+                        className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                      />
+                    </label>
+
+                    <label className="text-sm font-medium text-slate-700">
+                      Payroll Week End
+                      <input
+                        type="date"
+                        value={editWeekEnd}
+                        min={editWeekStart}
+                        onChange={(e) => setEditWeekEnd(e.target.value)}
+                        required
+                        className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                      />
+                    </label>
+
+                    <label className="text-sm font-medium text-slate-700">
+                      Notes
+                      <input
+                        value={editNotes}
+                        onChange={(e) => setEditNotes(e.target.value)}
+                        placeholder="Optional notes"
+                        className="mt-1 block w-full rounded-lg border border-slate-300 p-2.5"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="overflow-x-auto rounded-lg border border-slate-200">
+                    <table className="w-full min-w-[1450px] text-left text-sm">
+                      <thead className="bg-slate-50 text-xs uppercase text-slate-600">
+                        <tr>
+                          {[
+                            "No.",
+                            "Employee Name",
+                            "Designation",
+                            "Rate per Day",
+                            "No. of Days",
+                            "Total Pay",
+                            "OT Hours",
+                            "OT Pay Mode",
+                            "Manual OT Pay",
+                            "Total Overtime",
+                            "Net Amount",
+                            "",
+                          ].map((heading, index) => (
+                            <th
+                              key={`${heading}-${index}`}
+                              className="px-3 py-3"
+                            >
+                              {heading}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {editRows.map((row, index) => (
+                          <tr
+                            key={row.id || `new-${index}`}
+                            className="border-t border-slate-100"
+                          >
+                            <td className="px-3 py-2">{index + 1}</td>
+
+                            <td className="px-2 py-2">
+                              <input
+                                value={row.employee_name}
+                                onChange={(e) =>
+                                  updateEditRow(
+                                    index,
+                                    "employee_name",
+                                    e.target.value,
+                                  )
+                                }
+                                aria-label={`Edit employee name row ${index + 1}`}
+                                placeholder="Employee name"
+                                className="w-48 rounded border border-slate-300 p-2"
+                              />
+                            </td>
+
+                            <td className="px-2 py-2">
+                              <input
+                                value={row.designation}
+                                onChange={(e) =>
+                                  updateEditRow(
+                                    index,
+                                    "designation",
+                                    e.target.value,
+                                  )
+                                }
+                                aria-label={`Edit designation row ${index + 1}`}
+                                placeholder="Designation"
+                                className="w-36 rounded border border-slate-300 p-2"
+                              />
+                            </td>
+
+                            <td className="px-2 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={row.daily_rate}
+                                onChange={(e) =>
+                                  updateEditRow(
+                                    index,
+                                    "daily_rate",
+                                    e.target.value,
+                                  )
+                                }
+                                className="w-28 rounded border border-slate-300 p-2"
+                              />
+                            </td>
+
+                            <td className="px-2 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                max="31"
+                                step="0.25"
+                                value={row.days_worked}
+                                onChange={(e) =>
+                                  updateEditRow(
+                                    index,
+                                    "days_worked",
+                                    e.target.value,
+                                  )
+                                }
+                                className="w-24 rounded border border-slate-300 p-2"
+                              />
+                            </td>
+
+                            <td className="whitespace-nowrap px-3 py-2">
+                              {money(row.total_pay)}
+                            </td>
+
+                            <td className="px-2 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                max="500"
+                                step="0.25"
+                                value={row.overtime_hours}
+                                onChange={(e) =>
+                                  updateEditRow(
+                                    index,
+                                    "overtime_hours",
+                                    e.target.value,
+                                  )
+                                }
+                                className="w-24 rounded border border-slate-300 p-2"
+                              />
+                            </td>
+
+                            <td className="px-2 py-2">
+                              <select
+                                value={row.overtime_mode}
+                                onChange={(e) =>
+                                  updateEditRow(
+                                    index,
+                                    "overtime_mode",
+                                    e.target.value,
+                                  )
+                                }
+                                disabled={updating}
+                                className="w-32 rounded border border-slate-300 p-2"
+                              >
+                                <option value="automatic">Automatic</option>
+                                <option value="manual">Manual</option>
+                              </select>
+                            </td>
+
+                            <td className="px-2 py-2">
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                value={row.manual_overtime_amount}
+                                onChange={(e) =>
+                                  updateEditRow(
+                                    index,
+                                    "manual_overtime_amount",
+                                    e.target.value,
+                                  )
+                                }
+                                disabled={
+                                  updating || row.overtime_mode !== "manual"
+                                }
+                                placeholder="Manual amount"
+                                className="w-32 rounded border border-slate-300 p-2 disabled:bg-slate-100 disabled:text-slate-400"
+                              />
+                            </td>
+
+                            <td className="whitespace-nowrap px-3 py-2">
+                              {money(row.overtime_total)}
+                            </td>
+
+                            <td className="whitespace-nowrap px-3 py-2 font-semibold">
+                              {money(row.net_amount)}
+                            </td>
+
+                            <td className="px-2 py-2">
+                              <button
+                                type="button"
+                                onClick={() => removeEditRow(index)}
+                                disabled={
+                                  editRows.length === 1 || updating
+                                }
+                                className="rounded px-2 py-1 text-red-600 hover:bg-red-50 disabled:opacity-30"
+                              >
+                                Remove
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+
+                      <tfoot className="bg-slate-50 font-semibold">
+                        <tr>
+                          <td colSpan={5} className="px-3 py-3 text-right">
+                            Batch Total
+                          </td>
+                          <td className="px-3 py-3">
+                            {money(
+                              editRows.reduce(
+                                (sum, row) => sum + row.total_pay,
+                                0,
+                              ),
+                            )}
+                          </td>
+                          <td />
+                          <td />
+                          <td className="px-3 py-3">
+                            {money(
+                              editRows.reduce(
+                                (sum, row) =>
+                                  sum +
+                                  (row.overtime_mode === "manual"
+                                    ? row.manual_overtime_amount
+                                    : 0),
+                                0,
+                              ),
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            {money(
+                              editRows.reduce(
+                                (sum, row) => sum + row.overtime_total,
+                                0,
+                              ),
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            {money(
+                              editRows.reduce(
+                                (sum, row) => sum + row.net_amount,
+                                0,
+                              ),
+                            )}
+                          </td>
+                          <td />
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  <p className="text-xs text-slate-500">
+                    Automatic OT Pay = (Daily Rate ÷ 8) × OT Hours. Manual OT
+                    Pay uses the amount entered in Manual OT Pay. Net Amount =
+                    Total Pay + OT Pay. No deductions or OT multiplier are
+                    applied.
+                  </p>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <button
+                      type="button"
+                      onClick={addEditRow}
+                      disabled={updating}
+                      className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      + Add Employee
+                    </button>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={cancelEdit}
+                        disabled={updating}
+                        className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Cancel
+                      </button>
+
+                      <button
+                        type="submit"
+                        disabled={updating || deletingId !== null}
+                        className="rounded-lg bg-slate-900 px-5 py-2 text-sm font-semibold text-white hover:bg-slate-700 disabled:opacity-50"
+                      >
+                        {updating ? "Updating..." : "Save Changes"}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          <p className="text-xs text-slate-500">
+            OT calculation: Automatic = Daily Rate ÷ 8 × OT Hours. Manual =
+            entered OT Pay amount. Net Amount = Total Pay + OT Pay. No
+            deductions or OT multiplier are applied.
+          </p>
         </div>
       </main>
     </div>

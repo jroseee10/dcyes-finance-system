@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 
 
@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import Sidebar from "@/components/layout/Sidebar";
 
 import { supabase } from "@/lib/supabase";
+import { Wallet, FileCheck, ArrowLeftRight, Landmark, Receipt, BarChart3 } from "lucide-react";
 
 
 
@@ -433,13 +434,12 @@ export default function DashboardPage() {
 
       if (depositsResult.error) {
 
-        console.error(
-
-          "Deposit error:",
-
-          depositsResult.error
-
-        );
+        console.error("Deposit error details:", {
+          message: depositsResult.error.message,
+          code: depositsResult.error.code,
+          details: depositsResult.error.details,
+          hint: depositsResult.error.hint,
+        });
 
 
 
@@ -2021,7 +2021,7 @@ export default function DashboardPage() {
 
   return (
 
-    <main className="min-h-screen bg-slate-50 flex">
+    <main className="min-h-screen bg-[#f3f6fb] flex">
 
 
 
@@ -2029,7 +2029,7 @@ export default function DashboardPage() {
 
 
 
-      <section className="flex-1 min-w-0 p-6 md:p-8 lg:p-10">
+      <section className="flex-1 min-w-0 p-5 md:p-8 xl:p-10">
 
 
 
@@ -2045,7 +2045,7 @@ export default function DashboardPage() {
 
 
 
-            <h1 className="text-3xl md:text-4xl font-bold text-slate-900">
+            <h1 className="text-3xl md:text-4xl font-semibold tracking-tight text-slate-950">
 
               Dashboard
 
@@ -2053,7 +2053,7 @@ export default function DashboardPage() {
 
 
 
-            <p className="text-gray-500 mt-2">
+            <p className="text-slate-600 mt-2 text-base">
 
               Overall financial overview across all locations
 
@@ -2081,7 +2081,7 @@ export default function DashboardPage() {
 
             }
 
-            className="w-fit bg-slate-900 hover:bg-slate-800 text-white px-5 py-3 rounded-xl font-medium transition disabled:opacity-50"
+            className="w-fit bg-[#142b4a] hover:bg-[#203d62] text-white px-6 py-3 rounded-xl font-semibold shadow-sm transition disabled:opacity-50"
 
           >
 
@@ -2089,7 +2089,7 @@ export default function DashboardPage() {
 
               ? "Loading..."
 
-              : "â†» Refresh"}
+              : "Refresh"}
 
           </button>
 
@@ -2131,7 +2131,7 @@ export default function DashboardPage() {
 
 
 
-          <h2 className="text-xl font-bold text-slate-900">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
 
             Overall Company Summary
 
@@ -2139,7 +2139,7 @@ export default function DashboardPage() {
 
 
 
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-slate-500 mt-1">
 
             Combined totals from all locations
 
@@ -2151,297 +2151,132 @@ export default function DashboardPage() {
 
 
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
 
-
-
-          {/* EXPENSES */}
-
-
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-
-
-
-            <p className="text-sm text-gray-500">
-
-              Monthly Expenses
-
-            </p>
-
-
-
-            <p className="text-2xl font-bold text-slate-900 mt-2">
-
-              {loading
-
-                ? "..."
-
-                : formatCurrency(
-
-                    expenses.total
-
-                  )}
-
-            </p>
-
-
-
-            <p className="text-xs text-gray-400 mt-2">
-
-              {expenses.count} transaction
-
-              {expenses.count !== 1
-
-                ? "s"
-
-                : ""}
-
-            </p>
-
-
-
+          {/* MONTHLY EXPENSES */}
+          <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-500">Monthly Expenses</p>
+                <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 tabular-nums">
+                  {loading ? "..." : formatCurrency(expenses.total)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-blue-50 p-3 text-blue-700">
+                <Wallet size={25} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+              <span className="text-sm text-slate-500">Recorded transactions</span>
+              <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
+                {expenses.count}
+              </span>
+            </div>
           </div>
-
-
 
           {/* LIQUIDATION */}
-
-
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-
-
-
-            <p className="text-sm text-gray-500">
-
-              Liquidation
-
-            </p>
-
-
-
-            <p className="text-2xl font-bold text-slate-900 mt-2">
-
-              {loading
-
-                ? "..."
-
-                : formatCurrency(
-
-                    liquidation.total
-
-                  )}
-
-            </p>
-
-
-
-            <p className="text-xs text-gray-400 mt-2">
-
-              {liquidation.count} transaction
-
-              {liquidation.count !== 1
-
-                ? "s"
-
-                : ""}
-
-            </p>
-
-
-
+          <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-500">Liquidation</p>
+                <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 tabular-nums">
+                  {loading ? "..." : formatCurrency(liquidation.total)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-emerald-50 p-3 text-emerald-700">
+                <FileCheck size={25} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+              <span className="text-sm text-slate-500">Recorded transactions</span>
+              <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-700">
+                {liquidation.count}
+              </span>
+            </div>
           </div>
 
-
-
-          {/* TELEGRAPHIC */}
-
-
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-
-
-
-            <p className="text-sm text-gray-500">
-
-              Telegraphic Transfer
-
-            </p>
-
-
-
-            <p className="text-2xl font-bold text-slate-900 mt-2">
-
-              {loading
-
-                ? "..."
-
-                : formatCurrency(
-
-                    telegraphic.total
-
-                  )}
-
-            </p>
-
-
-
-            <p className="text-xs text-gray-400 mt-2">
-
-              {telegraphic.count} transaction
-
-              {telegraphic.count !== 1
-
-                ? "s"
-
-                : ""}
-
-            </p>
-
-
-
+          {/* TELEGRAPHIC TRANSFER */}
+          <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-500">Telegraphic Transfer</p>
+                <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 tabular-nums">
+                  {loading ? "..." : formatCurrency(telegraphic.total)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-violet-50 p-3 text-violet-700">
+                <ArrowLeftRight size={25} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+              <span className="text-sm text-slate-500">Recorded transactions</span>
+              <span className="rounded-full bg-violet-50 px-3 py-1 text-sm font-bold text-violet-700">
+                {telegraphic.count}
+              </span>
+            </div>
           </div>
 
-
-
-          {/* DEPOSITS */}
-
-
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-
-
-
-            <p className="text-sm text-gray-500">
-
-              Deposit Slips
-
-            </p>
-
-
-
-            <p className="text-2xl font-bold text-slate-900 mt-2">
-
-              {loading
-
-                ? "..."
-
-                : formatCurrency(
-
-                    deposits.total
-
-                  )}
-
-            </p>
-
-
-
-            <p className="text-xs text-gray-400 mt-2">
-
-              {deposits.count} transaction
-
-              {deposits.count !== 1
-
-                ? "s"
-
-                : ""}
-
-            </p>
-
-
-
+          {/* DEPOSIT SLIPS */}
+          <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-500">Deposit Slips</p>
+                <p className="mt-3 text-2xl font-semibold tracking-tight text-slate-900 tabular-nums">
+                  {loading ? "..." : formatCurrency(deposits.total)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-amber-50 p-3 text-amber-700">
+                <Landmark size={25} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+              <span className="text-sm text-slate-500">Recorded transactions</span>
+              <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-bold text-amber-700">
+                {deposits.count}
+              </span>
+            </div>
           </div>
-
-
 
           {/* TOTAL TRANSACTIONS */}
-
-
-
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-
-
-
-            <p className="text-sm text-gray-500">
-
-              Total Transactions
-
-            </p>
-
-
-
-            <p className="text-3xl font-bold text-slate-900 mt-2">
-
-              {loading
-
-                ? "..."
-
-                : totalTransactions}
-
-            </p>
-
-
-
-            <p className="text-xs text-gray-400 mt-2">
-
-              Across all locations
-
-            </p>
-
-
-
+          <div className="group relative overflow-hidden rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition-all duration-200 hover:-translate-y-1 hover:shadow-lg">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-500">Total Transactions</p>
+                <p className="mt-3 text-3xl font-semibold tracking-tight text-slate-900 tabular-nums">
+                  {loading ? "..." : totalTransactions}
+                </p>
+              </div>
+              <div className="rounded-xl bg-cyan-50 p-3 text-cyan-700">
+                <BarChart3 size={25} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="mt-6 flex items-center justify-between border-t border-slate-100 pt-4">
+              <span className="text-sm text-slate-500">Coverage</span>
+              <span className="text-sm font-semibold text-slate-700">All locations</span>
+            </div>
           </div>
 
-
-
-          {/* GRAND TOTAL */}
-
-
-
-          <div className="bg-slate-900 rounded-2xl shadow-sm p-6 text-white">
-
-
-
-            <p className="text-sm text-slate-300">
-
-              Overall Grand Total
-
-            </p>
-
-
-
-            <p className="text-3xl font-bold mt-2">
-
-              {loading
-
-                ? "..."
-
-                : formatCurrency(
-
-                    grandTotal
-
-                  )}
-
-            </p>
-
-
-
-            <p className="text-xs text-slate-400 mt-2">
-
-              Combined financial records
-
-            </p>
-
-
-
+          {/* OVERALL GRAND TOTAL */}
+          <div className="group relative overflow-hidden rounded-2xl bg-[#142b4a] p-6 text-white shadow-lg transition-all duration-200 hover:-translate-y-1 hover:shadow-xl">
+            <div className="absolute -right-10 -top-10 h-40 w-40 rounded-full bg-white/5" aria-hidden="true" />
+            <div className="relative flex items-start justify-between">
+              <div>
+                <p className="text-sm font-semibold text-blue-100">Overall Grand Total</p>
+                <p className="mt-3 text-2xl font-semibold tracking-tight tabular-nums">
+                  {loading ? "..." : formatCurrency(grandTotal)}
+                </p>
+              </div>
+              <div className="rounded-xl bg-white/10 p-3 text-white">
+                <Receipt size={25} aria-hidden="true" />
+              </div>
+            </div>
+            <div className="relative mt-6 flex items-center justify-between border-t border-white/15 pt-4">
+              <span className="text-sm text-blue-100">Combined financial records</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-200">Overall</span>
+            </div>
           </div>
-
-
 
         </div>
-
-
 
         {/* =================================================
 
@@ -2451,23 +2286,23 @@ export default function DashboardPage() {
 
 
 
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm mt-8 overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-md mt-10 overflow-hidden">
 
 
 
-          <div className="px-6 py-5 border-b border-slate-200">
+          <div className="px-7 py-6 border-b border-slate-200 bg-white">
 
 
 
-            <h2 className="text-xl font-bold text-slate-900">
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
 
-              ðŸ“ Location Overview
+              Location Overview
 
             </h2>
 
 
 
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-slate-500 mt-1">
 
               Financial totals and transactions for each location
 
@@ -2517,7 +2352,7 @@ export default function DashboardPage() {
 
 
 
-                <thead className="bg-slate-50">
+                <thead className="bg-slate-50/90">
 
 
 
@@ -2525,7 +2360,7 @@ export default function DashboardPage() {
 
 
 
-                    <th className="text-left px-6 py-4 text-xs font-semibold uppercase text-slate-500">
+                    <th className="text-left px-6 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                       Location
 
@@ -2533,7 +2368,7 @@ export default function DashboardPage() {
 
 
 
-                    <th className="text-right px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                    <th className="text-right px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                       Expenses
 
@@ -2541,7 +2376,7 @@ export default function DashboardPage() {
 
 
 
-                    <th className="text-right px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                    <th className="text-right px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                       Liquidation
 
@@ -2549,7 +2384,7 @@ export default function DashboardPage() {
 
 
 
-                    <th className="text-right px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                    <th className="text-right px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                       Telegraphic
 
@@ -2557,7 +2392,7 @@ export default function DashboardPage() {
 
 
 
-                    <th className="text-right px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                    <th className="text-right px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                       Deposits
 
@@ -2565,7 +2400,7 @@ export default function DashboardPage() {
 
 
 
-                    <th className="text-center px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                    <th className="text-center px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                       Transactions
 
@@ -2573,7 +2408,7 @@ export default function DashboardPage() {
 
 
 
-                    <th className="text-right px-6 py-4 text-xs font-semibold uppercase text-slate-500">
+                    <th className="text-right px-6 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                       Grand Total
 
@@ -2607,7 +2442,7 @@ export default function DashboardPage() {
 
                         }
 
-                        className="border-t border-slate-100 hover:bg-slate-50"
+                        className="border-t border-slate-100 hover:bg-slate-50 transition-colors"
 
                       >
 
@@ -2617,7 +2452,7 @@ export default function DashboardPage() {
 
 
 
-                          <p className="font-semibold text-slate-900">
+                          <p className="font-bold text-slate-900">
 
                             {location.name}
 
@@ -2755,7 +2590,7 @@ export default function DashboardPage() {
 
 
 
-              <h2 className="text-xl font-bold text-slate-900">
+              <h2 className="text-xl font-semibold tracking-tight text-slate-900">
 
                 Recent Transactions
 
@@ -2763,7 +2598,7 @@ export default function DashboardPage() {
 
 
 
-              <p className="text-sm text-gray-500 mt-1">
+              <p className="text-sm text-slate-500 mt-1">
 
                 Latest financial transactions across all locations
 
@@ -2813,7 +2648,7 @@ export default function DashboardPage() {
 
 
 
-                  <thead className="bg-slate-50">
+                  <thead className="bg-slate-50/90">
 
 
 
@@ -2821,7 +2656,7 @@ export default function DashboardPage() {
 
 
 
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                      <th className="text-left px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                         Date
 
@@ -2829,7 +2664,7 @@ export default function DashboardPage() {
 
 
 
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                      <th className="text-left px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                         Location
 
@@ -2837,7 +2672,7 @@ export default function DashboardPage() {
 
 
 
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                      <th className="text-left px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                         Type
 
@@ -2845,7 +2680,7 @@ export default function DashboardPage() {
 
 
 
-                      <th className="text-left px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                      <th className="text-left px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                         Description
 
@@ -2853,7 +2688,7 @@ export default function DashboardPage() {
 
 
 
-                      <th className="text-right px-5 py-4 text-xs font-semibold uppercase text-slate-500">
+                      <th className="text-right px-5 py-4 text-sm font-bold uppercase tracking-wide text-slate-600">
 
                         Amount
 
@@ -2889,7 +2724,7 @@ export default function DashboardPage() {
 
                           key={`${transaction.type}-${transaction.id}-${index}`}
 
-                          className="border-t border-slate-100 hover:bg-slate-50"
+                          className="border-t border-slate-100 hover:bg-slate-50 transition-colors"
 
                         >
 
@@ -2949,7 +2784,7 @@ export default function DashboardPage() {
 
                               className={
 
-                                "inline-flex px-3 py-1 rounded-full text-xs font-semibold " +
+                                "inline-flex px-2.5 py-1 rounded-md text-xs font-medium " +
 
                                 getTypeClass(
 
@@ -2987,7 +2822,7 @@ export default function DashboardPage() {
 
 
 
-                          <td className="px-5 py-4 text-right text-sm font-bold text-slate-900 whitespace-nowrap">
+                          <td className="px-5 py-4 text-right text-sm font-semibold text-slate-900 whitespace-nowrap">
 
                             {formatCurrency(
 
@@ -3033,11 +2868,11 @@ export default function DashboardPage() {
 
 
 
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
 
 
 
-            <h2 className="text-xl font-bold text-slate-900">
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">
 
               Quick Summary
 
@@ -3045,7 +2880,7 @@ export default function DashboardPage() {
 
 
 
-            <p className="text-sm text-gray-500 mt-1">
+            <p className="text-sm text-slate-500 mt-1">
 
               Overall financial statistics
 
@@ -3057,7 +2892,7 @@ export default function DashboardPage() {
 
 
 
-              <div className="rounded-xl bg-slate-50 p-5">
+              <div className="rounded-lg bg-slate-50 border border-slate-100 p-4">
 
 
 
@@ -3069,7 +2904,7 @@ export default function DashboardPage() {
 
 
 
-                <p className="text-3xl font-bold text-slate-900 mt-2">
+                <p className="text-2xl font-semibold text-slate-900 mt-2">
 
                   {loading
 
@@ -3093,7 +2928,7 @@ export default function DashboardPage() {
 
 
 
-              <div className="rounded-xl bg-slate-50 p-5">
+              <div className="rounded-lg bg-slate-50 border border-slate-100 p-4">
 
 
 
@@ -3105,7 +2940,7 @@ export default function DashboardPage() {
 
 
 
-                <p className="text-3xl font-bold text-slate-900 mt-2">
+                <p className="text-2xl font-semibold text-slate-900 mt-2">
 
                   {loading
 
@@ -3121,7 +2956,7 @@ export default function DashboardPage() {
 
 
 
-              <div className="rounded-xl bg-slate-900 p-5 text-white">
+              <div className="rounded-lg bg-[#142b4a] p-5 text-white">
 
 
 
@@ -3133,7 +2968,7 @@ export default function DashboardPage() {
 
 
 
-                <p className="text-2xl font-bold mt-2">
+                <p className="text-xl font-semibold mt-2">
 
                   {loading
 
@@ -3153,7 +2988,7 @@ export default function DashboardPage() {
 
 
 
-              <div className="rounded-xl bg-yellow-50 border border-yellow-100 p-5">
+              <div className="rounded-lg bg-yellow-50 border border-yellow-100 p-4">
 
 
 

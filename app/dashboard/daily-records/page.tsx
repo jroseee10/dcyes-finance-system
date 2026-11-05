@@ -130,7 +130,6 @@ export default function DailyRecordsPage() {
   const [profile, setProfile] = useState<CurrentProfile | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
   const [records, setRecords] = useState<DailyRecord[]>([]);
-  const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -138,38 +137,6 @@ export default function DailyRecordsPage() {
   const [deletingRecordId, setDeletingRecordId] = useState<number | null>(null);
   const [reportPeriod, setReportPeriod] = useState<"daily" | "weekly" | "monthly">("daily");
   const [reportDate, setReportDate] = useState(getManilaDate());
-
-  const normalizedSearch = searchTerm.trim().toLocaleLowerCase();
-
-  const filteredRecords = records.filter((record) => {
-    if (!normalizedSearch) return true;
-
-    const searchableValues = [
-      record.transaction_no,
-      record.id,
-      record.record_date,
-      formatDate(record.record_date),
-      record.payee,
-      record.employee_name,
-      record.receipt_no,
-      record.locations?.name,
-      record.address,
-      destinationLabel(record.destination),
-      record.remarks,
-      getRecordTotal(record),
-      ...(record.daily_record_items || []).flatMap((item) => [
-        item.description,
-        item.amount,
-        item.item_order,
-      ]),
-    ];
-
-    return searchableValues
-      .filter((value) => value !== null && value !== undefined)
-      .join(" ")
-      .toLocaleLowerCase()
-      .includes(normalizedSearch);
-  });
 
   const [saveMessage, setSaveMessage] = useState("");
   const [saveMessageType, setSaveMessageType] =
@@ -308,12 +275,19 @@ export default function DailyRecordsPage() {
         .order("id", { ascending: false });
 
       if (error) {
-        console.error("Daily Records load error:", {
-          message: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
-        });
+        console.error(
+          "Daily Records load error:",
+          JSON.stringify(
+            {
+              message: error.message,
+              code: error.code,
+              details: error.details,
+              hint: error.hint,
+            },
+            null,
+            2
+          )
+        );
 
         setRecords([]);
         return;
@@ -467,33 +441,26 @@ export default function DailyRecordsPage() {
       setSaveMessage("Please wait while your Admin profile is verified.");
       return;
     }
-
     if (!isAdmin) {
       setSaveMessage("An active Admin account is required to save records.");
       setSaveMessageType("error");
       return;
     }
-
     if (!date || !payee.trim() || !locationId) {
-      setSaveMessage(
-        "Please complete the date, payee, and project location."
-      );
+      setSaveMessage("Please complete the date, payee, and project location.");
       setSaveMessageType("error");
       return;
     }
-
     if (address.length > 2000) {
       setSaveMessage("Address must not exceed 2,000 characters.");
       setSaveMessageType("error");
       return;
     }
-
     if (!DESTINATIONS.some((item) => item.value === destination)) {
       setSaveMessage("Please select a valid destination.");
       setSaveMessageType("error");
       return;
     }
-
     if (
       items.length === 0 ||
       items.length > 100 ||
@@ -512,31 +479,96 @@ export default function DailyRecordsPage() {
       return;
     }
 
-    setSaving(true);
+    // Capture edit state before it is cleared after a successful save.
+    const wasEditing = editingRecordId !== null;
+    const recordBeingEdited = editingRecordId;
+    const normalizeText = (value: unknown) =>
+      String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+    const normalizeAmount = (value: unknown) =>
+      Math.round(Number(value || 0) * 100);
 
+    const currentItems = items
+      .map((item) => ({
+        description: normalizeText(item.description),
+        amount: normalizeAmount(item.amount),
+      }))
+      .sort(
+        (a, b) =>
+          a.description.localeCompare(b.description) || a.amount - b.amount
+      );
+    const currentTotal = currentItems.reduce((sum, item) => sum + item.amount, 0);
+
+    // This is a client-side warning based on records currently loaded in the table.
+    // It is not a replacement for database-level duplicate protection.
+    const possibleDuplicate = records.find((record) => {
+      if (recordBeingEdited !== null && record.id === recordBeingEdited) return false;
+
+      const savedItems = (record.daily_record_items || [])
+        .map((item) => ({
+          description: normalizeText(item.description),
+          amount: normalizeAmount(item.amount),
+        }))
+        .sort(
+          (a, b) =>
+            a.description.localeCompare(b.description) || a.amount - b.amount
+        );
+      const sameItems =
+        currentItems.length === savedItems.length &&
+        currentItems.every(
+          (item, index) =>
+            item.description === savedItems[index].description &&
+            item.amount === savedItems[index].amount
+        );
+
+      return (
+        record.record_date === date &&
+        Number(record.location_id) === Number(locationId) &&
+        record.destination === destination &&
+        normalizeText(record.payee) === normalizeText(payee) &&
+        normalizeAmount(getRecordTotal(record)) === currentTotal &&
+        sameItems
+      );
+    });
+
+    if (possibleDuplicate) {
+      const proceed = window.confirm(
+        `Possible duplicate Daily Record detected.\n\n` +
+          `Existing transaction: ${possibleDuplicate.transaction_no}\n` +
+          `Date: ${possibleDuplicate.record_date}\n` +
+          `Payee: ${possibleDuplicate.payee}\n` +
+          `Total: ${formatMoney(getRecordTotal(possibleDuplicate))}\n\n` +
+          "Do you still want to continue saving?"
+      );
+      if (!proceed) {
+        setSaveMessage(
+          `Save cancelled. Please review existing transaction ${possibleDuplicate.transaction_no}.`
+        );
+        setSaveMessageType("info");
+        return;
+      }
+    }
+
+    setSaving(true);
     try {
       const {
         data: { session },
         error: sessionError,
       } = await supabase.auth.getSession();
-
       if (sessionError || !session?.access_token) {
-        setSaveMessage(
-          "Your login session is unavailable. Please log in again."
-        );
+        setSaveMessage("Your login session is unavailable. Please log in again.");
         setSaveMessageType("error");
         return;
       }
 
       const response = await fetch("/api/admin/daily-records", {
-        method: editingRecordId ? "PATCH" : "POST",
+        method: wasEditing ? "PATCH" : "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          ...(editingRecordId
-            ? { id: editingRecordId }
+          ...(wasEditing
+            ? { id: recordBeingEdited }
             : { submission_key: submissionKey }),
           record_date: date,
           payee: payee.trim(),
@@ -553,9 +585,7 @@ export default function DailyRecordsPage() {
           })),
         }),
       });
-
       const result = (await response.json()) as SaveResponse;
-
       if (!response.ok || !result.success || !result.record) {
         setSaveMessage(result.error || "Unable to save the Daily Record.");
         setSaveMessageType("error");
@@ -567,33 +597,25 @@ export default function DailyRecordsPage() {
       let uploadedCount = 0;
       const uploadErrors: string[] = [];
 
-      // Upload selected attachments to the existing protected API.
       for (const file of filesToUpload) {
         try {
           const formData = new FormData();
           formData.append("daily_record_id", String(savedRecord.id));
           formData.append("file", file);
-
           const uploadResponse = await fetch(
             "/api/admin/daily-record-attachments",
             {
               method: "POST",
-              headers: {
-                Authorization: `Bearer ${session.access_token}`,
-              },
+              headers: { Authorization: `Bearer ${session.access_token}` },
               body: formData,
             }
           );
-
           const uploadResult = (await uploadResponse.json()) as {
             success?: boolean;
             error?: string;
           };
-
           if (!uploadResponse.ok || !uploadResult.success) {
-            uploadErrors.push(
-              `${file.name}: ${uploadResult.error || "Upload failed."}`
-            );
+            uploadErrors.push(`${file.name}: ${uploadResult.error || "Upload failed."}`);
           } else {
             uploadedCount += 1;
           }
@@ -604,7 +626,6 @@ export default function DailyRecordsPage() {
       }
 
       await loadRecords();
-
       setEditingRecordId(null);
       setDate(getManilaDate());
       setPayee("");
@@ -617,23 +638,22 @@ export default function DailyRecordsPage() {
       setItems([createItem()]);
       setSubmissionKey(createSubmissionKey());
       setPendingFiles([]);
-
       if (photoInputRef.current) photoInputRef.current.value = "";
       if (attachmentInputRef.current) attachmentInputRef.current.value = "";
 
+      const actionWord = wasEditing ? "updated" : "saved";
       if (uploadErrors.length > 0) {
         setSaveMessage(
-          `Daily Record ${savedRecord.transaction_no} was ${editingRecordId ? "updated" : "saved"}. ` +
+          `Daily Record ${savedRecord.transaction_no} was ${actionWord}. ` +
             `${uploadedCount} of ${filesToUpload.length} attachment(s) uploaded. ` +
-            `Failed: ${uploadErrors.join(" ")} ` +
-            "Use the Receipt / Proof column below to retry failed uploads."
+            `Failed: ${uploadErrors.join(" ")} Use the Receipt / Proof column below to retry failed uploads.`
         );
         setSaveMessageType("error");
       } else {
         setSaveMessage(
           filesToUpload.length > 0
-            ? `Daily Record ${savedRecord.transaction_no} ${editingRecordId ? "updated" : "saved"} successfully. All ${uploadedCount} attachment(s) uploaded.`
-            : `Daily Record ${savedRecord.transaction_no} ${editingRecordId ? "updated" : "saved"} successfully.`
+            ? `Daily Record ${savedRecord.transaction_no} ${actionWord} successfully. All ${uploadedCount} attachment(s) uploaded.`
+            : `Daily Record ${savedRecord.transaction_no} ${actionWord} successfully.`
         );
         setSaveMessageType("success");
       }
@@ -904,28 +924,33 @@ export default function DailyRecordsPage() {
         "Remarks",
       ];
 
-      // Assign export-only numbers after filtering and sorting.
-      // Original database transaction numbers remain unchanged.
-      const exportTransactionNumbers = new Map<number, string>(
-        filtered.map((record, index) => [
-          record.id,
-          String(index + 1).padStart(4, "0"),
-        ])
-      );
-
-      const summaryRows: (string | number)[][] = filtered.map((record) => [
-        exportTransactionNumbers.get(record.id) || "0000",
-        formatExcelDate(record.record_date),
-        record.payee || "",
-        record.employee_name || "",
-        record.receipt_no || "",
-        record.locations?.name || "",
-        record.address || "",
-        destinationLabel(record.destination),
-        record.remarks || "",
-        getRecordTotal(record),
-        (record.daily_record_items || []).length,
-      ]);
+      const summaryRows: (string | number)[][] = filtered
+        .map((record) => ({
+          transactionNo: formatTransactionNo(record.transaction_no),
+          date: formatExcelDate(record.record_date),
+          payee: record.payee || "",
+          employeeName: record.employee_name || "",
+          receiptNo: record.receipt_no || "",
+          location: record.locations?.name || "",
+          address: record.address || "",
+          destination: destinationLabel(record.destination),
+          remarks: record.remarks || "",
+          total: getRecordTotal(record),
+          itemCount: (record.daily_record_items || []).length,
+        }))
+        .map((record) => [
+          record.transactionNo,
+          record.date,
+          record.payee,
+          record.employeeName,
+          record.receiptNo,
+          record.location,
+          record.address,
+          record.destination,
+          record.remarks,
+          record.total,
+          record.itemCount,
+        ]);
 
       const detailRows: (string | number)[][] = filtered.flatMap((record) => {
         const orderedItems = [...(record.daily_record_items || [])].sort(
@@ -933,7 +958,7 @@ export default function DailyRecordsPage() {
         );
 
         return orderedItems.map((item) => [
-          exportTransactionNumbers.get(record.id) || "0000",
+          formatTransactionNo(record.transaction_no),
           formatExcelDate(record.record_date),
           record.payee || "",
           record.employee_name || "",
@@ -1430,14 +1455,14 @@ export default function DailyRecordsPage() {
   }
 
   const inputClass =
-    "w-full rounded-lg border border-slate-300 px-3 py-2.5 outline-none focus:border-slate-500 disabled:bg-slate-100";
+    "w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-800 outline-none transition focus:border-[#244A78] focus:ring-2 focus:ring-[#244A78]/10 disabled:bg-slate-100";
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 md:p-6 lg:p-8">
-      <div className="mx-auto max-w-7xl">
+    <div className="min-h-screen bg-[#f3f6fb] p-4 md:p-6 lg:p-8">
+      <div className="mx-auto max-w-[1600px]">
         <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-slate-900">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
               Daily Records
             </h1>
             <p className="mt-2 text-sm text-slate-500">
@@ -1475,17 +1500,17 @@ export default function DailyRecordsPage() {
 
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
           <div className="xl:col-span-1">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-              <h2 className="text-xl font-bold text-slate-900">
+            <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="text-lg font-semibold tracking-tight text-slate-900">
                 {editingRecordId ? "Edit Daily Record" : "New Daily Record"}
               </h2>
-              <p className="mb-6 mt-1 text-sm text-slate-500">
+              <p className="mb-5 mt-1 text-sm text-slate-500">
                 Transaction number is generated when the record is saved.
               </p>
 
               <div className="space-y-5">
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Date *
                   </label>
                   <input
@@ -1498,7 +1523,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Payee *
                   </label>
                   <input
@@ -1511,7 +1536,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Project Location *
                   </label>
                   <select
@@ -1530,7 +1555,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Project Address
                   </label>
                   <textarea
@@ -1549,7 +1574,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Employee Name
                   </label>
                   <input
@@ -1562,7 +1587,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Receipt No.
                   </label>
                   <input
@@ -1575,7 +1600,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Destination *
                   </label>
                   <select
@@ -1609,7 +1634,7 @@ export default function DailyRecordsPage() {
                     {items.map((item, index) => (
                       <div
                         key={item.key}
-                        className="rounded-xl border bg-slate-50 p-3"
+                        className="rounded-lg border border-slate-200 bg-slate-50 p-3"
                       >
                         <div className="mb-2 flex items-center justify-between">
                           <span className="text-xs font-semibold uppercase text-slate-500">
@@ -1654,7 +1679,7 @@ export default function DailyRecordsPage() {
                   </div>
                 </div>
 
-                <div className="rounded-xl bg-slate-900 p-4 text-white">
+                <div className="rounded-lg bg-[#142b4a] p-4 text-white">
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-slate-300">Overall Total</span>
                     <span className="text-xl font-bold">
@@ -1664,7 +1689,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium">
+                  <label className="mb-1.5 block text-sm font-medium text-slate-700">
                     Remarks
                   </label>
                   <textarea
@@ -1678,7 +1703,7 @@ export default function DailyRecordsPage() {
                 </div>
 
                 {/* Attachments selected before saving */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                   <h3 className="font-semibold text-slate-900">
                     Receipt / Proof Attachments
                   </h3>
@@ -1783,7 +1808,7 @@ export default function DailyRecordsPage() {
                     type="button"
                     onClick={handleSave}
                     disabled={saving || loadingProfile || !isAdmin}
-                    className="flex-1 rounded-lg bg-slate-900 px-4 py-3 font-semibold text-white disabled:bg-slate-300"
+                    className="flex-1 rounded-lg bg-[#142b4a] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#1d3b60] disabled:bg-slate-300"
                   >
                     {saving
                       ? editingRecordId
@@ -1808,7 +1833,7 @@ export default function DailyRecordsPage() {
           </div>
 
           <div className="xl:col-span-2">
-            <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
+            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-col gap-3 border-b p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <h2 className="text-xl font-bold">Daily Records</h2>
@@ -1890,65 +1915,23 @@ export default function DailyRecordsPage() {
                 </div>
               </div>
 
-              <div className="mb-4 rounded-xl border border-slate-200 bg-white p-4">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                  <div className="flex-1">
-                    <label
-                      htmlFor="daily-record-search"
-                      className="mb-2 block text-sm font-semibold text-slate-700"
-                    >
-                      Search Daily Records
-                    </label>
-                    <input
-                      id="daily-record-search"
-                      type="search"
-                      value={searchTerm}
-                      onChange={(event) => setSearchTerm(event.target.value)}
-                      placeholder="Transaction no., payee, description, receipt no., employee..."
-                      className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm outline-none focus:border-blue-600 focus:ring-2 focus:ring-blue-100"
-                    />
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <span className="whitespace-nowrap text-sm text-slate-600">
-                      {normalizedSearch
-                        ? `${filteredRecords.length} matching record(s) of ${records.length}`
-                        : `${records.length} record(s)`}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setSearchTerm("")}
-                      disabled={!searchTerm}
-                      className="rounded-lg border border-slate-300 px-4 py-3 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Clear
-                    </button>
-                  </div>
-                </div>
-                <p className="mt-2 text-xs text-slate-500">
-                  Search by transaction number, date, payee, item description,
-                  amount, project location, address, receipt number, employee,
-                  destination, or remarks.
-                </p>
-              </div>
-
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[1450px] text-sm">
-                  <thead className="bg-slate-900 text-white">
+                  <thead className="bg-slate-100 text-slate-700">
                     <tr>
-                      <th className="px-4 py-3 text-left">Transaction No.</th>
-                      <th className="px-4 py-3 text-left">Date</th>
-                      <th className="px-4 py-3 text-left">Payee</th>
-                      <th className="px-4 py-3 text-left">Description</th>
-                      <th className="px-4 py-3 text-right">Amount</th>
-                      <th className="px-4 py-3 text-left">Project Location</th>
-                      <th className="px-4 py-3 text-left">Project Address</th>
-                      <th className="px-4 py-3 text-left">Receipt No.</th>
-                      <th className="px-4 py-3 text-left">Employee Name</th>
-                      <th className="px-4 py-3 text-left">Destination</th>
-                      <th className="px-4 py-3 text-left">Remarks</th>
-                      <th className="px-4 py-3 text-left">Receipt / Proof</th>
-                      <th className="px-4 py-3 text-left">Actions</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Transaction No.</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Date</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Payee</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Description</th>
+                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-wide">Amount</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Project Location</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Project Address</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Receipt No.</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Employee Name</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Destination</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Remarks</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Receipt / Proof</th>
+                      <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wide">Actions</th>
                     </tr>
                   </thead>
 
@@ -1965,14 +1948,8 @@ export default function DailyRecordsPage() {
                           No Daily Records yet.
                         </td>
                       </tr>
-                    ) : filteredRecords.length === 0 ? (
-                      <tr>
-                        <td colSpan={13} className="p-10 text-center text-slate-500">
-                          No records match your search. Try another keyword or clear the search.
-                        </td>
-                      </tr>
                     ) : (
-                      filteredRecords.map((record) => {
+                      records.map((record) => {
                         const recordItems = [
                           ...(record.daily_record_items || []),
                         ].sort(
@@ -1985,9 +1962,9 @@ export default function DailyRecordsPage() {
                         return (
                           <tr
                             key={record.id}
-                            className="align-top hover:bg-slate-50"
+                            className="align-top transition-colors hover:bg-slate-50/80"
                           >
-                            <td className="px-4 py-4 font-bold">
+                            <td className="px-4 py-4 font-medium text-slate-800">
                               {record.transaction_no}
                             </td>
 
@@ -1995,7 +1972,7 @@ export default function DailyRecordsPage() {
                               {formatDate(record.record_date)}
                             </td>
 
-                            <td className="px-4 py-4 font-semibold">
+                            <td className="px-4 py-4 font-medium text-slate-800">
                               {record.payee}
                             </td>
 

@@ -1,6 +1,22 @@
-﻿"use client";
+"use client";
 
-import { LayoutDashboard, MapPin, CalendarDays, FileChartColumn, CalendarRange, ChartNoAxesCombined, Images, Wallet, Users, Activity, Settings, LogOut } from "lucide-react";
+import {
+  LayoutDashboard,
+  MapPin,
+  CalendarDays,
+  FileChartColumn,
+  CalendarRange,
+  ChartNoAxesCombined,
+  Images,
+  Wallet,
+  Users,
+  Activity,
+  Settings,
+  LogOut,
+  Landmark,
+  UserCircle,
+} from "lucide-react";
+
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
@@ -22,6 +38,7 @@ export default function Sidebar() {
   const [profile, setProfile] = useState<CurrentProfile | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [showIdleWarning, setShowIdleWarning] = useState(false);
+
   const lastLoggedPath = useRef<string | null>(null);
   const autoLogoutStarted = useRef(false);
   const lastActivityAt = useRef(Date.now());
@@ -112,7 +129,6 @@ export default function Sidebar() {
     String(profile?.email || "").trim().toLowerCase() ===
       "jerosboty@gmail.com" &&
     isAdmin;
-
 
   // Record dashboard page visits for the current active user.
   useEffect(() => {
@@ -240,6 +256,7 @@ export default function Sidebar() {
       });
     };
   }, [profile, loadingProfile, router]);
+
   function isActive(href: string) {
     if (href === "/dashboard") {
       return pathname === "/dashboard";
@@ -249,11 +266,14 @@ export default function Sidebar() {
   }
 
   function linkClass(href: string) {
+    const active = isActive(href);
+
     return [
-      "flex items-center gap-3 px-4 py-3 rounded-lg transition-colors",
-      isActive(href)
-        ? "bg-slate-700 text-white font-semibold"
-        : "text-slate-300 hover:bg-slate-700 hover:text-white",
+      "group flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5",
+      "text-sm font-medium transition-colors duration-150",
+      active
+        ? "bg-[#244A78] text-white shadow-sm ring-1 ring-white/10"
+        : "text-slate-300 hover:bg-white/10 hover:text-white",
     ].join(" ");
   }
 
@@ -263,7 +283,6 @@ export default function Sidebar() {
     setLoggingOut(true);
 
     try {
-      // Log the logout event when possible.
       if (profile?.email) {
         const { error: activityError } = await supabase
           .from("activity_logs")
@@ -302,149 +321,229 @@ export default function Sidebar() {
     }
   }
 
+  const navigationItems = [
+    {
+      href: "/dashboard",
+      label: "Dashboard",
+      icon: LayoutDashboard,
+    },
+    {
+      href: "/dashboard/locations",
+      label: "Locations",
+      icon: MapPin,
+    },
+    {
+      href: "/dashboard/daily-records",
+      label: "Daily Records",
+      icon: CalendarDays,
+    },
+  ];
+
+  const reportItems = [
+    {
+      href: "/dashboard/daily-report",
+      label: "Daily Report",
+      icon: FileChartColumn,
+    },
+    {
+      href: "/dashboard/weekly-report",
+      label: "Weekly Report",
+      icon: CalendarRange,
+    },
+    {
+      href: "/dashboard/monthly-report",
+      label: "Monthly Report",
+      icon: ChartNoAxesCombined,
+    },
+  ];
+
   return (
-    <aside className="flex min-h-screen w-64 flex-col bg-[#0f172a] text-white">
+    <aside className="sticky top-0 flex h-screen w-72 shrink-0 flex-col overflow-hidden bg-[#102744] text-white shadow-xl">
       {/* BRAND */}
-      <div className="border-b border-slate-700 px-6 py-6">
-        <h1 className="text-2xl font-bold tracking-wide">DCYES</h1>
-        <p className="mt-1 text-xs text-slate-400">
-          Finance Management System
-        </p>
+      <div className="border-b border-white/10 px-5 py-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white text-[#102744] shadow-md">
+            <Landmark className="h-6 w-6" aria-hidden="true" />
+          </div>
+
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold tracking-[0.10em] text-white">
+              DCYES
+            </h1>
+            <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-200">
+              Finance Management
+            </p>
+            <p className="text-[11px] text-slate-400">
+              System
+            </p>
+          </div>
+        </div>
       </div>
 
       {/* NAVIGATION */}
-      <nav className="flex-1 space-y-2 overflow-y-auto px-4 py-6">
-        <Link href="/dashboard" className={linkClass("/dashboard")}>
-          
-          <LayoutDashboard className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Dashboard</span>
-        </Link>
+      <nav
+        aria-label="Main navigation"
+        className="flex-1 space-y-1 overflow-y-auto px-3 py-5"
+      >
+        <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+          Main Menu
+        </p>
 
-        <Link
-          href="/dashboard/locations"
-          className={linkClass("/dashboard/locations")}
-        >
-          
-          <MapPin className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Locations</span>
-        </Link>
+        {navigationItems.map((item) => {
+          const Icon = item.icon;
 
-        <Link
-          href="/dashboard/daily-records"
-          className={linkClass("/dashboard/daily-records")}
-        >
-          
-          <CalendarDays className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Daily Records</span>
-        </Link>
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={isActive(item.href) ? "page" : undefined}
+              className={linkClass(item.href)}
+            >
+              <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <span>{item.label}</span>
+            </Link>
+          );
+        })}
 
-        <div className="my-3 border-t border-slate-700 pt-3">
-          <p className="px-4 pb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">Reports</p>
-          <Link href="/dashboard/daily-report" className={linkClass("/dashboard/daily-report")}>
-            <FileChartColumn className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Daily Report</span>
-          </Link>
-          <Link href="/dashboard/weekly-report" className={linkClass("/dashboard/weekly-report")}>
-            <CalendarRange className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Weekly Report</span>
-          </Link>
-          <Link href="/dashboard/monthly-report" className={linkClass("/dashboard/monthly-report")}>
-            <ChartNoAxesCombined className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Monthly Report</span>
-          </Link>
+        {/* REPORTS */}
+        <div className="mt-5 border-t border-white/10 pt-4">
+          <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+            Reports
+          </p>
+
+          <div className="space-y-1">
+            {reportItems.map((item) => {
+              const Icon = item.icon;
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  aria-current={isActive(item.href) ? "page" : undefined}
+                  className={linkClass(item.href)}
+                >
+                  <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
         </div>
 
-        <Link
-          href="/dashboard/receipt-gallery"
-          className={linkClass("/dashboard/receipt-gallery")}
-        >
-          
-          <Images className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Receipt / Proof Gallery</span>
-        </Link>
+        {/* OTHER MODULES */}
+        <div className="mt-5 border-t border-white/10 pt-4">
+          <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+            Management
+          </p>
 
-        {/* ADMIN-ONLY NAVIGATION */}
-        {!loadingProfile && isAdmin && (
-          <>
-            <Link
-              href="/dashboard/payroll"
-              className={linkClass("/dashboard/payroll")}
-            >
-              
-              <Wallet className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Payroll</span>
-            </Link>
+          <Link
+            href="/dashboard/receipt-gallery"
+            className={linkClass("/dashboard/receipt-gallery")}
+          >
+            <Images className="h-5 w-5 shrink-0" aria-hidden="true" />
+            <span>Receipt / Proof Gallery</span>
+          </Link>
 
-            <Link
-              href="/dashboard/users"
-              className={linkClass("/dashboard/users")}
-            >
-              
-              <Users className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Users</span>
-            </Link>
-
-            {canViewActivityLogs && (
+          {!loadingProfile && isAdmin && (
+            <>
               <Link
-                href="/dashboard/activity-logs"
-                className={linkClass("/dashboard/activity-logs")}
+                href="/dashboard/payroll"
+                className={linkClass("/dashboard/payroll")}
               >
-                <Activity className="h-5 w-5 shrink-0" aria-hidden="true" />
-                <span>Activity Logs</span>
+                <Wallet className="h-5 w-5 shrink-0" aria-hidden="true" />
+                <span>Payroll</span>
               </Link>
-            )}
 
-            <Link
-              href="/dashboard/settings"
-              className={linkClass("/dashboard/settings")}
-            >
-              
-              <Settings className="h-5 w-5 shrink-0" aria-hidden="true" /><span>Settings</span>
-            </Link>
-          </>
-        )}
+              <Link
+                href="/dashboard/users"
+                className={linkClass("/dashboard/users")}
+              >
+                <Users className="h-5 w-5 shrink-0" aria-hidden="true" />
+                <span>Users</span>
+              </Link>
+
+              {canViewActivityLogs && (
+                <Link
+                  href="/dashboard/activity-logs"
+                  className={linkClass("/dashboard/activity-logs")}
+                >
+                  <Activity className="h-5 w-5 shrink-0" aria-hidden="true" />
+                  <span>Activity Logs</span>
+                </Link>
+              )}
+
+              <Link
+                href="/dashboard/settings"
+                className={linkClass("/dashboard/settings")}
+              >
+                <Settings className="h-5 w-5 shrink-0" aria-hidden="true" />
+                <span>Settings</span>
+              </Link>
+            </>
+          )}
+        </div>
       </nav>
 
+      {/* IDLE WARNING */}
       {showIdleWarning && !loggingOut && (
         <div
           role="alertdialog"
           aria-modal="true"
           aria-labelledby="idle-warning-title"
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
         >
-          <div className="w-full max-w-md rounded-xl bg-white p-6 text-slate-900 shadow-xl">
-            <h2 id="idle-warning-title" className="text-xl font-bold">
+          <div className="w-full max-w-md rounded-2xl bg-white p-7 text-slate-900 shadow-2xl">
+            <h2
+              id="idle-warning-title"
+              className="text-xl font-bold"
+            >
               Inactivity Warning
             </h2>
-            <p className="mt-3 text-sm text-slate-600">
+
+            <p className="mt-3 text-sm leading-6 text-slate-600">
               Wala kang activity sa loob ng 14 minuto. Awtomatiko kang
               ila-log out sa ika-15 minuto kung mananatiling inactive.
             </p>
+
             <button
               type="button"
               onClick={() => {
                 lastActivityAt.current = Date.now();
                 setShowIdleWarning(false);
               }}
-              className="mt-5 w-full rounded-lg bg-[#1F3B64] px-4 py-3 font-semibold text-white hover:bg-slate-800"
+              className="mt-6 w-full rounded-xl bg-[#173B63] px-5 py-3 font-semibold text-white transition hover:bg-[#244A78]"
             >
               Continue Working
             </button>
           </div>
         </div>
       )}
-      {/* USER AREA */}
-      <div className="border-t border-slate-700 p-4">
+
+      {/* USER PROFILE AND LOGOUT */}
+      <div className="border-t border-white/10 bg-[#0B1E35] p-3">
         <Link
           href="/dashboard/profile"
           className={[
-            "flex items-center gap-3 rounded-lg p-3 transition-colors",
-            "hover:bg-slate-700",
-            isActive("/dashboard/profile") ? "bg-slate-700" : "",
+            "flex items-center gap-3 rounded-xl p-3 transition-colors",
+            "hover:bg-white/10",
+            isActive("/dashboard/profile") ? "bg-white/10" : "",
           ].join(" ")}
         >
-          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-slate-700 text-lg font-semibold">
-            {profile?.name
-              ? profile.name.charAt(0).toUpperCase()
-              : "ðŸ‘¤"}
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#244A78] text-white">
+            {profile?.name ? (
+              <span className="text-lg font-bold">
+                {profile.name.charAt(0).toUpperCase()}
+              </span>
+            ) : (
+              <UserCircle className="h-6 w-6" aria-hidden="true" />
+            )}
           </div>
 
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-white">
+            <p className="truncate text-sm font-bold text-white">
               {loadingProfile ? "Loading..." : profile?.name || "User"}
             </p>
-            <p className="truncate text-xs text-slate-400">
+            <p className="truncate text-xs capitalize text-slate-400">
               {loadingProfile
                 ? "..."
                 : profile?.position || "View Profile"}
@@ -452,26 +551,21 @@ export default function Sidebar() {
           </div>
         </Link>
 
-        {/* LOGOUT */}
         <button
           type="button"
           onClick={handleLogout}
           disabled={loggingOut}
           className={[
-            "mt-3 flex w-full items-center gap-3 rounded-lg px-4 py-3",
-            "text-red-300 transition-colors hover:bg-red-500/10",
-            "hover:text-red-200 disabled:cursor-not-allowed disabled:opacity-50",
+            "mt-2 flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2.5",
+            "text-sm font-semibold text-red-300 transition-colors",
+            "hover:bg-red-500/10 hover:text-red-200",
+            "disabled:cursor-not-allowed disabled:opacity-50",
           ].join(" ")}
         >
-          
+          <LogOut className="h-5 w-5 shrink-0" aria-hidden="true" />
           <span>{loggingOut ? "Logging out..." : "Logout"}</span>
         </button>
       </div>
     </aside>
   );
 }
-
-
-
-
-

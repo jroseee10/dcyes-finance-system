@@ -43,6 +43,15 @@ export default function LocationExpensesPage() {
 
   const [search, setSearch] = useState("");
   const [showForm, setShowForm] = useState(false);
+  // =====================================================
+  // SELECTIVE EXPORT STATE
+  // =====================================================
+
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportMode, setExportMode] = useState<"whole" | "materials">("whole");
+  const [exportScope, setExportScope] = useState<"all" | "selected">("selected");
+  const [selectedExportPayees, setSelectedExportPayees] = useState<string[]>([]);
+  const [selectedExportMaterials, setSelectedExportMaterials] = useState<string[]>([]);
 
   // =====================================================
   // CURRENT USER / ROLE
@@ -1262,6 +1271,7 @@ export default function LocationExpensesPage() {
           "";
 
         return (
+          formatExpenseNumber(expense.id).includes(text) ||
           expense.payee
             ?.toLowerCase()
             .includes(
@@ -1303,932 +1313,424 @@ export default function LocationExpensesPage() {
     );
 
   // =====================================================
+  // SELECTIVE EXPORT DATA
+  // =====================================================
+
+  const exportPayeeOptions = useMemo(() => {
+    return Array.from(
+      new Set(
+        expenses
+          .map((expense) => String(expense.payee || "").trim())
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [expenses]);
+
+  const exportMaterialOptions = useMemo(() => {
+    const selectedPayees = new Set(selectedExportPayees);
+
+    return Array.from(
+      new Set(
+        expenses
+          .filter((expense) => selectedPayees.has(String(expense.payee || "").trim()))
+          .flatMap((expense) =>
+            (expense.expense_items || [])
+              .map((item) => String(item.description || "").trim())
+              .filter(Boolean)
+          )
+      )
+    ).sort((a, b) => a.localeCompare(b));
+  }, [expenses, selectedExportPayees]);
+
+  const exportPreviewRows = useMemo(() => {
+    const selectedPayees = new Set(selectedExportPayees);
+    const selectedMaterials = new Set(selectedExportMaterials);
+
+    return expenses
+      .filter((expense) =>
+        exportScope === "all" || selectedPayees.has(String(expense.payee || "").trim())
+      )
+      .flatMap((expense) => {
+        const expenseItems = expense.expense_items || [];
+
+        if (exportMode === "materials") {
+          const matchingItems = expenseItems.filter((item) =>
+            selectedMaterials.has(String(item.description || "").trim())
+          );
+
+          return matchingItems.map((item, itemIndex) => ({
+            expenseId: expense.id,
+            expenseDate: expense.expense_date,
+            payee: expense.payee,
+            address: expense.address || "",
+            description: item.description || "",
+            qty: Number(item.qty || 0),
+            unit: item.unit || "",
+            price: Number(item.price || 0),
+            amount: Number(item.qty || 0) * Number(item.price || 0),
+            reimburse: 0,
+            refund: 0,
+            balance: 0,
+            status: itemIndex === 0 ? expense.status || "" : "",
+            remarks: itemIndex === 0 ? expense.remarks || "" : "",
+          }));
+        }
+
+        if (expenseItems.length === 0) {
+          return [{
+            expenseId: expense.id,
+            expenseDate: expense.expense_date,
+            payee: expense.payee,
+            address: expense.address || "",
+            description: "",
+            qty: 0,
+            unit: "",
+            price: 0,
+            amount: Number(expense.amount || 0),
+            reimburse: Number(expense.reimburse || 0),
+            refund: Number(expense.refund || 0),
+            balance: Number(expense.balance || 0),
+            status: expense.status || "",
+            remarks: expense.remarks || "",
+          }];
+        }
+
+        return expenseItems.map((item, itemIndex) => ({
+          expenseId: expense.id,
+          expenseDate: expense.expense_date,
+          payee: expense.payee,
+          address: expense.address || "",
+          description: item.description || "",
+          qty: Number(item.qty || 0),
+          unit: item.unit || "",
+          price: Number(item.price || 0),
+          amount: Number(item.qty || 0) * Number(item.price || 0),
+          reimburse: itemIndex === 0 ? Number(expense.reimburse || 0) : 0,
+          refund: itemIndex === 0 ? Number(expense.refund || 0) : 0,
+          balance: itemIndex === 0 ? Number(expense.balance || 0) : 0,
+          status: itemIndex === 0 ? expense.status || "" : "",
+          remarks: itemIndex === 0 ? expense.remarks || "" : "",
+        }));
+      });
+  }, [
+    expenses,
+    exportMode,
+    exportScope,
+    selectedExportPayees,
+    selectedExportMaterials,
+  ]);
+
+  const exportPreviewTotals = useMemo(() => {
+    return exportPreviewRows.reduce(
+      (totals, row) => ({
+        amount: totals.amount + row.amount,
+        reimburse: totals.reimburse + row.reimburse,
+        refund: totals.refund + row.refund,
+        balance: totals.balance + row.amount - row.reimburse - row.refund,
+      }),
+      {
+        amount: 0,
+        reimburse: 0,
+        refund: 0,
+        balance: 0,
+      }
+    );
+  }, [exportPreviewRows]);
+  // =====================================================
   // EXCEL EXPORT
   // =====================================================
 
+  function formatExpenseNumber(id: number) { return String(id).padStart(4, "0"); }
+
   async function exportToExcel() {
     if (
-      filteredExpenses.length ===
-      0
+      (exportScope === "selected" && selectedExportPayees.length === 0) ||
+      exportPreviewRows.length === 0 ||
+      (exportMode === "materials" && selectedExportMaterials.length === 0)
     ) {
-      alert(
-        "Walang expense records na ie-export."
-      );
-
+      alert("Please select payees and valid records before exporting.");
       return;
     }
 
-    const workbook =
-      new ExcelJS.Workbook();
-
-    workbook.creator =
-      "DCYES Financial Management System";
-
-    workbook.created =
-      new Date();
-
-    const sheet =
-      workbook.addWorksheet(
-        "Monthly Expenses"
-      );
-
-    sheet.pageSetup = {
-      orientation:
-        "landscape",
-
-      paperSize: 9,
-
-      fitToPage: true,
-
-      fitToWidth: 1,
-
-      fitToHeight: 0,
-    };
-
-    sheet.views = [
-      {
-        state:
-          "frozen",
-
-        ySplit: 4,
-
-        showGridLines:
-          false,
-      },
-    ];
-
-    const navy =
-      "1F3A5F";
-
-    const white =
-      "FFFFFF";
-
-    const black =
-      "000000";
-
-    // TITLE
-
-    sheet.mergeCells(
-      "A1:M1"
-    );
-
-    const title =
-      sheet.getCell(
-        "A1"
-      );
-
-    title.value =
-      `${locationName.toUpperCase()} - MONTHLY EXPENSES`;
-
-    title.font = {
-      name:
-        "Calibri",
-
-      size: 16,
-
-      bold: true,
-
-      color: {
-        argb:
-          white,
-      },
-    };
-
-    title.fill = {
-      type:
-        "pattern",
-
-      pattern:
-        "solid",
-
-      fgColor: {
-        argb:
-          navy,
-      },
-    };
-
-    title.alignment = {
-      horizontal:
-        "center",
-
-      vertical:
-        "middle",
-    };
-
-    sheet.getRow(
-      1
-    ).height = 28;
-
-    // SUBTITLE
-
-    sheet.mergeCells(
-      "A2:M2"
-    );
-
-    const subtitle =
-      sheet.getCell(
-        "A2"
-      );
-
-    subtitle.value =
-      "DCYES";
-
-    subtitle.font = {
-      name:
-        "Calibri",
-
-      size: 11,
-
-      italic: true,
-
-      color: {
-        argb:
-          navy,
-      },
-    };
-
-    subtitle.alignment = {
-      horizontal:
-        "center",
-
-      vertical:
-        "middle",
-    };
-
-    // HEADER
-
-    const headers = [
-      "Date",
-      "Payee",
-      "Address",
-      "Description",
-      "Qty",
-      "Unit",
-      "Price",
-      "Amount",
-      "Reimburse",
-      "Refund",
-      "Balance",
-      "Status",
-      "Remarks",
-    ];
-
-    const headerRow =
-      sheet.getRow(
-        4
-      );
-
-    headers.forEach(
-      (
-        header,
-        index
-      ) => {
-        const cell =
-          headerRow.getCell(
-            index + 1
-          );
-
-        cell.value =
-          header;
-
-        cell.font = {
-          name:
-            "Calibri",
-
-          size: 10,
-
-          bold: true,
-
-          color: {
-            argb:
-              white,
-          },
-        };
-
-        cell.fill = {
-          type:
-            "pattern",
-
-          pattern:
-            "solid",
-
-          fgColor: {
-            argb:
-              navy,
-          },
-        };
-
-        cell.alignment = {
-          horizontal:
-            "center",
-
-          vertical:
-            "middle",
-
-          wrapText:
-            true,
-        };
-
-        cell.border = {
-          top: {
-            style:
-              "thin",
-
-            color: {
-              argb:
-                black,
-            },
-          },
-
-          bottom: {
-            style:
-              "thin",
-
-            color: {
-              argb:
-                black,
-            },
-          },
-
-          left: {
-            style:
-              "thin",
-
-            color: {
-              argb:
-                black,
-            },
-          },
-
-          right: {
-            style:
-              "thin",
-
-            color: {
-              argb:
-                black,
-            },
-          },
-        };
-      }
-    );
-
-    headerRow.height =
-      35;
-
-    // FORMAT EXCEL ROW
-
-    function formatExcelRow(
-      row: ExcelJS.Row
-    ) {
-      row.eachCell(
-        (cell) => {
-          cell.font = {
-            name:
-              "Calibri",
-
-            size:
-              10,
-          };
-
-          cell.border = {
-            top: {
-              style:
-                "thin",
-
-              color: {
-                argb:
-                  "B7B7B7",
-              },
-            },
-
-            bottom: {
-              style:
-                "thin",
-
-              color: {
-                argb:
-                  "B7B7B7",
-              },
-            },
-
-            left: {
-              style:
-                "thin",
-
-              color: {
-                argb:
-                  "B7B7B7",
-              },
-            },
-
-            right: {
-              style:
-                "thin",
-
-              color: {
-                argb:
-                  "B7B7B7",
-              },
-            },
-          };
-
-          cell.alignment = {
-            vertical:
-              "middle",
-
-            wrapText:
-              true,
-          };
-        }
-      );
-
-      const rawDate =
-        String(
-          row.getCell(
-            1
-          ).value
-        );
-
-      if (
-        rawDate
+    try {
+      const workbook = new ExcelJS.Workbook();
+      workbook.creator = "DCYES Finance Management System";
+      workbook.created = new Date();
+      workbook.modified = new Date();
+
+      const pesoFormat = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
+      const navy = "FF17365D";
+      const headerNavy = "FF1F4E78";
+      const white = "FFFFFFFF";
+      const periodLabel = exportScope === "all"
+        ? "ALL TRANSACTIONS - COMPLETE REPORT"
+        : exportMode === "materials"
+          ? "SELECTED MATERIALS ONLY - PARTIAL REPORT"
+          : "SELECTED PAYEES - WHOLE TRANSACTIONS";
+
+      // Both worksheets use the same layout as Daily Records.
+      function buildSheet(
+        name: string,
+        headers: string[],
+        rows: (string | number)[][],
+        widths: number[],
+        amountColumn: number,
+        totalAmount: number,
+        countColumn?: number,
+        totalCount?: number
       ) {
-        const [
-          year,
-          month,
-          day,
-        ] =
-          rawDate
-            .split("-")
-            .map(
-              Number
-            );
+        const sheet = workbook.addWorksheet(name);
+        sheet.columns = headers.map((_header, index) => ({
+          key: `column${index + 1}`,
+          width: widths[index] || 18,
+        }));
 
-        row.getCell(
-          1
-        ).value =
-          new Date(
-            Date.UTC(
-              year,
-              month - 1,
-              day
-            )
-          );
+        sheet.mergeCells(1, 1, 1, headers.length);
+        const systemTitle = sheet.getCell(1, 1);
+        systemTitle.value = "DCYES FINANCE MANAGEMENT SYSTEM";
+        systemTitle.font = {
+          name: "Arial", size: 16, bold: true, color: { argb: white },
+        };
+        systemTitle.fill = {
+          type: "pattern", pattern: "solid", fgColor: { argb: navy },
+        };
+        systemTitle.alignment = { horizontal: "center", vertical: "middle" };
+        sheet.getRow(1).height = 30;
 
-        row.getCell(
-          1
-        ).numFmt =
-          "mmmm d, yyyy";
-      }
+        sheet.mergeCells(2, 1, 2, headers.length);
+        const reportTitle = sheet.getCell(2, 1);
+        reportTitle.value = `${locationName.toUpperCase()} - ${name.toUpperCase()}`;
+        reportTitle.font = {
+          name: "Arial", size: 12, bold: true, color: { argb: navy },
+        };
+        reportTitle.alignment = { horizontal: "center", vertical: "middle" };
+        sheet.getRow(2).height = 23;
 
-      [
-        7,
-        8,
-        9,
-        10,
-        11,
-      ].forEach(
-        (column) => {
-          row.getCell(
-            column
-          ).numFmt =
-            '₱#,##0.00;[Red]-₱#,##0.00';
+        sheet.mergeCells(3, 1, 3, headers.length);
+        const subtitle = sheet.getCell(3, 1);
+        subtitle.value = `Period: ALL RECORDS | ${periodLabel} | Generated: ${new Date().toLocaleDateString("en-PH")}`;
+        subtitle.font = {
+          name: "Arial", size: 10, italic: true, color: { argb: "FF475569" },
+        };
+        subtitle.alignment = { horizontal: "center", vertical: "middle" };
+        sheet.getRow(3).height = 21;
 
-          row.getCell(
-            column
-          ).alignment = {
-            horizontal:
-              "right",
-
-            vertical:
-              "middle",
+        sheet.getRow(4).height = 12;
+        const headerRow = sheet.getRow(5);
+        headerRow.height = 30;
+        headers.forEach((header, index) => {
+          const cell = headerRow.getCell(index + 1);
+          cell.value = header;
+          cell.font = {
+            name: "Arial", size: 10, bold: true, color: { argb: white },
           };
-        }
-      );
-
-      row.getCell(
-        5
-      ).numFmt =
-        "#,##0.##";
-
-      [
-        1,
-        5,
-        6,
-        12,
-      ].forEach(
-        (column) => {
-          row.getCell(
-            column
-          ).alignment = {
-            horizontal:
-              "center",
-
-            vertical:
-              "middle",
-
-            wrapText:
-              true,
+          cell.fill = {
+            type: "pattern", pattern: "solid", fgColor: { argb: headerNavy },
           };
-        }
-      );
-    }
+          cell.alignment = {
+            horizontal: "center", vertical: "middle", wrapText: true,
+          };
+          cell.border = {
+            top: { style: "thin", color: { argb: "FFB4C6E7" } },
+            bottom: { style: "thin", color: { argb: "FFB4C6E7" } },
+            left: { style: "thin", color: { argb: "FFD9E2F3" } },
+            right: { style: "thin", color: { argb: "FFD9E2F3" } },
+          };
+        });
 
-    // DATA
-
-    filteredExpenses.forEach(
-      (expense) => {
-        const expenseItems =
-          expense.expense_items ||
-          [];
-
-        if (
-          expenseItems.length ===
-          0
-        ) {
-          const row =
-            sheet.addRow([
-              expense.expense_date,
-              expense.payee,
-              expense.address ||
-                "",
-              "",
-              "",
-              "",
-              "",
-              Number(
-                expense.amount ||
-                  0
-              ),
-              Number(
-                expense.reimburse ||
-                  0
-              ),
-              Number(
-                expense.refund ||
-                  0
-              ),
-              Number(
-                expense.balance ||
-                  0
-              ),
-              expense.status ||
-                "",
-              expense.remarks ||
-                "",
-            ]);
-
-          formatExcelRow(
-            row
-          );
-        } else {
-          expenseItems.forEach(
-            (
-              item,
-              itemIndex
-            ) => {
-              const row =
-                sheet.addRow([
-                  expense.expense_date,
-
-                  expense.payee,
-
-                  expense.address ||
-                    "",
-
-                  item.description,
-
-                  Number(
-                    item.qty ||
-                      0
-                  ),
-
-                  item.unit ||
-                    "",
-
-                  Number(
-                    item.price ||
-                      0
-                  ),
-
-                  Number(
-                    item.amount ||
-                      0
-                  ),
-
-                  itemIndex ===
-                  0
-                    ? Number(
-                        expense.reimburse ||
-                          0
-                      )
-                    : 0,
-
-                  itemIndex ===
-                  0
-                    ? Number(
-                        expense.refund ||
-                          0
-                      )
-                    : 0,
-
-                  itemIndex ===
-                  0
-                    ? Number(
-                        expense.balance ||
-                          0
-                      )
-                    : 0,
-
-                  itemIndex ===
-                  0
-                    ? expense.status ||
-                      ""
-                    : "",
-
-                  itemIndex ===
-                  0
-                    ? expense.remarks ||
-                      ""
-                    : "",
-                ]);
-
-              formatExcelRow(
-                row
-              );
+        rows.forEach((values, index) => {
+          const row = sheet.addRow(values);
+          row.height = 22;
+          row.eachCell({ includeEmpty: true }, (cell, columnNumber) => {
+            cell.font = { name: "Arial", size: 10 };
+            cell.alignment = { vertical: "top", wrapText: true };
+            if (index % 2 === 1) {
+              cell.fill = {
+                type: "pattern", pattern: "solid",
+                fgColor: { argb: "FFF0F6FC" },
+              };
             }
-          );
+            cell.border = {
+              bottom: { style: "hair", color: { argb: "FFD9E2F3" } },
+            };
+            if (columnNumber === amountColumn) {
+              cell.numFmt = pesoFormat;
+              cell.alignment = { horizontal: "right", vertical: "top" };
+            }
+          });
+        });
+
+        const totalValues: (string | number)[] = headers.map(() => "");
+        totalValues[0] = "OVERALL TOTAL";
+        totalValues[amountColumn - 1] = Number(totalAmount.toFixed(2));
+        if (countColumn && typeof totalCount === "number") {
+          totalValues[countColumn - 1] = totalCount;
+        }
+        const totalRow = sheet.addRow(totalValues);
+        totalRow.height = 26;
+        for (let column = 1; column <= headers.length; column++) {
+          const cell = totalRow.getCell(column);
+          cell.font = {
+            name: "Arial", size: 10, bold: true, color: { argb: white },
+          };
+          cell.fill = {
+            type: "pattern", pattern: "solid", fgColor: { argb: navy },
+          };
+          cell.border = {
+            top: { style: "medium", color: { argb: navy } },
+          };
+          if (column === amountColumn) {
+            cell.numFmt = pesoFormat;
+            cell.alignment = { horizontal: "right" };
+          }
+        }
+
+        sheet.autoFilter = {
+          from: { row: 5, column: 1 },
+          to: { row: Math.max(5, 5 + rows.length), column: headers.length },
+        };
+        sheet.views = [{
+          state: "frozen", xSplit: 0, ySplit: 5, showGridLines: false,
+        }];
+        sheet.pageSetup = {
+          paperSize: 9, orientation: "landscape", fitToPage: true,
+          fitToWidth: 1, fitToHeight: 0,
+          margins: {
+            left: 0.25, right: 0.25, top: 0.5, bottom: 0.5,
+            header: 0.2, footer: 0.2,
+          },
+        };
+        sheet.pageSetup.printArea = `A1:${sheet.getColumn(headers.length).letter}${totalRow.number}`;
+        sheet.headerFooter.oddFooter =
+          "&LDCYES Finance Management System&CPage &P of &N&RConfidential";
+      }
+
+      // Group only the already-selected preview rows. This preserves
+      // partial material exports without counting unselected materials.
+      const transactions = new Map<number, {
+        date: string;
+        payee: string;
+        address: string;
+        remarks: string;
+        amount: number;
+        itemCount: number;
+      }>();
+      for (const row of exportPreviewRows) {
+        const existing = transactions.get(row.expenseId);
+        if (existing) {
+          existing.amount += Number(row.amount || 0);
+          if (row.description) existing.itemCount += 1;
+          if (!existing.remarks && row.remarks) existing.remarks = row.remarks;
+        } else {
+          transactions.set(row.expenseId, {
+            date: row.expenseDate,
+            payee: row.payee,
+            address: row.address,
+            remarks: row.remarks,
+            amount: Number(row.amount || 0),
+            itemCount: row.description ? 1 : 0,
+          });
         }
       }
-    );
 
-    // TOTAL
-
-    const totalRowNumber =
-      sheet.rowCount +
-      2;
-
-    sheet.mergeCells(
-      `A${totalRowNumber}:G${totalRowNumber}`
-    );
-
-    const totalLabel =
-      sheet.getCell(
-        `A${totalRowNumber}`
+      // Number only the transactions in this export, ordered by the
+      // actual expense date (oldest first). ID breaks same-date ties.
+      const chronologicalTransactions = Array.from(transactions.entries()).sort(
+        ([idA, a], [idB, b]) =>
+          String(a.date || "").localeCompare(String(b.date || "")) || idA - idB
+      );
+      const exportNumbers = new Map<number, string>(
+        chronologicalTransactions.map(([id], index) => [
+          id,
+          String(index + 1).padStart(4, "0"),
+        ])
       );
 
-    totalLabel.value =
-      "OVERALL TOTAL";
+      const summaryRows: (string | number)[][] = chronologicalTransactions
+        .map(([expenseId, transaction]) => [
+          exportNumbers.get(expenseId) || formatExpenseNumber(expenseId),
+          transaction.date,
+          transaction.payee,
+          transaction.address,
+          transaction.remarks,
+          transaction.amount,
+          transaction.itemCount,
+        ]);
 
-    totalLabel.font = {
-      name:
-        "Calibri",
-
-      size: 11,
-
-      bold: true,
-
-      color: {
-        argb:
-          white,
-      },
-    };
-
-    totalLabel.fill = {
-      type:
-        "pattern",
-
-      pattern:
-        "solid",
-
-      fgColor: {
-        argb:
-          navy,
-      },
-    };
-
-    totalLabel.alignment = {
-      horizontal:
-        "center",
-
-      vertical:
-        "middle",
-    };
-
-    // =====================================================
-    // ACTUAL OVERALL TOTALS - NO EXCEL RECALCULATION NEEDED
-    // =====================================================
-
-    // IMPORTANT: Some older/imported location records may have
-    // expenses.amount / expenses.balance saved as 0 even though
-    // their expense_items contain the correct Qty x Price values.
-    // Compute totals from the item rows first so every location
-    // exports correctly, including newly added locations.
-
-    function getExportExpenseAmount(
-      expense: Expense
-    ) {
-      const expenseItems =
-        expense.expense_items || [];
-
-      if (expenseItems.length > 0) {
-        return expenseItems.reduce(
-          (sum, item) =>
-            sum +
-            Number(item.qty || 0) *
-              Number(item.price || 0),
-          0
-        );
-      }
-
-      return Number(
-        expense.amount || 0
-      );
-    }
-
-    const overallAmount =
-      filteredExpenses.reduce(
-        (sum, expense) =>
-          sum +
-          getExportExpenseAmount(
-            expense
-          ),
-        0
-      );
-
-    const overallReimburse =
-      filteredExpenses.reduce(
-        (sum, expense) =>
-          sum +
-          Number(
-            expense.reimburse ||
-              0
-          ),
-        0
-      );
-
-    const overallRefund =
-      filteredExpenses.reduce(
-        (sum, expense) =>
-          sum +
-          Number(
-            expense.refund ||
-              0
-          ),
-        0
-      );
-
-    const overallBalance =
-      filteredExpenses.reduce(
-        (sum, expense) => {
-          const amount =
-            getExportExpenseAmount(
-              expense
-            );
-
-          return (
-            sum +
-            amount -
-            Number(
-              expense.reimburse ||
-                0
-            ) -
-            Number(
-              expense.refund ||
-                0
-            )
-          );
-        },
-        0
-      );
-
-    // H = Amount
-    sheet.getCell(
-      totalRowNumber,
-      8
-    ).value = overallAmount;
-
-    // I = Reimburse
-    sheet.getCell(
-      totalRowNumber,
-      9
-    ).value = overallReimburse;
-
-    // J = Refund
-    sheet.getCell(
-      totalRowNumber,
-      10
-    ).value = overallRefund;
-
-    // K = Balance
-    sheet.getCell(
-      totalRowNumber,
-      11
-    ).value = overallBalance;
-
-    [
-      8,
-      9,
-      10,
-      11,
-    ].forEach(
-      (column) => {
-        const cell =
-          sheet.getCell(
-            totalRowNumber,
-            column
-          );
-
-        cell.font = {
-          name:
-            "Calibri",
-
-          size: 11,
-
-          bold: true,
-
-          color: {
-            argb:
-              white,
-          },
-        };
-
-        cell.fill = {
-          type:
-            "pattern",
-
-          pattern:
-            "solid",
-
-          fgColor: {
-            argb:
-              navy,
-          },
-        };
-
-        cell.numFmt =
-          '₱#,##0.00;[Red]-₱#,##0.00';
-
-        cell.alignment = {
-          horizontal:
-            "right",
-
-          vertical:
-            "middle",
-        };
-      }
-    );
-
-    for (
-      let column = 1;
-      column <= 13;
-      column++
-    ) {
-      const cell =
-        sheet.getCell(
-          totalRowNumber,
-          column
-        );
-
-      cell.border = {
-        top: {
-          style:
-            "thin",
-
-          color: {
-            argb:
-              black,
-          },
-        },
-
-        bottom: {
-          style:
-            "thin",
-
-          color: {
-            argb:
-              black,
-          },
-        },
-
-        left: {
-          style:
-            "thin",
-
-          color: {
-            argb:
-              black,
-          },
-        },
-
-        right: {
-          style:
-            "thin",
-
-          color: {
-            argb:
-              black,
-          },
-        },
-      };
-    }
-
-    // WIDTHS
-
-    const widths = [
-      16,
-      25,
-      28,
-      30,
-      9,
-      10,
-      15,
-      15,
-      15,
-      15,
-      15,
-      15,
-      28,
-    ];
-
-    widths.forEach(
-      (
-        width,
-        index
-      ) => {
-        sheet.getColumn(
-          index + 1
-        ).width =
-          width;
-      }
-    );
-
-    sheet.autoFilter = {
-      from:
-        "A4",
-
-      to:
-        "M4",
-    };
-
-    const safeLocationName =
-      locationName
-        .replace(
-          /[^a-zA-Z0-9-_ ]/g,
-          ""
+      const detailRows: (string | number)[][] = [...exportPreviewRows]
+        .sort((a, b) =>
+          String(a.expenseDate || "").localeCompare(String(b.expenseDate || "")) ||
+          a.expenseId - b.expenseId
         )
-        .trim()
-        .replace(
-          /\s+/g,
-          "_"
-        );
+        .map((row) => [
+        exportNumbers.get(row.expenseId) || formatExpenseNumber(row.expenseId),
+        row.expenseDate,
+        row.payee,
+        row.address,
+        row.description,
+        row.description ? row.qty : "",
+        row.unit,
+        row.description ? row.price : "",
+        row.amount,
+        row.remarks,
+      ]);
 
-    const fileName =
-      `${safeLocationName}_Monthly_Expenses.xlsx`;
+      buildSheet(
+        "Transaction Summary",
+        ["Transaction No.", "Date", "Payee", "Address", "Remarks", "Total Amount", "Item Count"],
+        summaryRows,
+        [19, 18, 28, 32, 40, 20, 14],
+        6,
+        exportPreviewTotals.amount,
+        7,
+        exportPreviewRows.filter((row) => Boolean(row.description)).length
+      );
+      buildSheet(
+        "Complete Item Details",
+        ["Transaction No.", "Date", "Payee", "Address", "Description", "Qty", "Unit", "Price", "Amount", "Remarks"],
+        detailRows,
+        [19, 18, 28, 32, 42, 10, 12, 18, 20, 40],
+        9,
+        exportPreviewTotals.amount
+      );
 
-    const buffer =
-      await workbook.xlsx.writeBuffer();
-
-    const blob =
-      new Blob(
-        [
-          buffer,
-        ],
-        {
-          type:
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      // Quantity and unit price are numeric, with a peso format for price.
+      const detailSheet = workbook.getWorksheet("Complete Item Details");
+      if (detailSheet) {
+        for (let rowNumber = 6; rowNumber < 6 + detailRows.length; rowNumber++) {
+          detailSheet.getCell(rowNumber, 6).numFmt = "#,##0.##";
+          detailSheet.getCell(rowNumber, 8).numFmt = pesoFormat;
+          detailSheet.getCell(rowNumber, 8).alignment = { horizontal: "right" };
         }
-      );
+      }
 
-    const url =
-      window.URL.createObjectURL(
-        blob
-      );
+      const safeLocationName = locationName
+        .replace(/[^a-zA-Z0-9-_ ]/g, "")
+        .trim()
+        .replace(/\s+/g, "_");
+      const fileName = `${safeLocationName}_${exportScope === "all"
+        ? "All_Monthly_Expenses"
+        : exportMode === "materials"
+          ? "Selected_Materials_Partial_Report"
+          : "Monthly_Expenses"}.xlsx`;
 
-    const link =
-      document.createElement(
-        "a"
-      );
-
-    link.href =
-      url;
-
-    link.download =
-      fileName;
-
-    document.body.appendChild(
-      link
-    );
-
-    link.click();
-
-    document.body.removeChild(
-      link
-    );
-
-    window.URL.revokeObjectURL(
-      url
-    );
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer as BlobPart], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      // Keep the object URL alive briefly while the browser starts the download.
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 60000);
+    } catch (error) {
+      console.error("Monthly Expenses Excel export error:", error);
+      alert("Excel export failed. Please check the browser console.");
+    }
   }
 
   // =====================================================
@@ -2298,12 +1800,18 @@ export default function LocationExpensesPage() {
 
             <button
               type="button"
-              onClick={
-                exportToExcel
-              }
+              onClick={() => { setExportScope("all"); setExportMode("whole"); setSelectedExportMaterials([]); setShowExportModal(true); }}
+              className="bg-blue-700 hover:bg-blue-800 text-white px-5 py-3 rounded-lg font-medium"
+            >
+              📥 Export All
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setExportScope("selected"); setSelectedExportPayees([]); setSelectedExportMaterials([]); setExportMode("whole"); setShowExportModal(true); }}
               className="bg-green-600 hover:bg-green-700 text-white px-5 py-3 rounded-lg font-medium"
             >
-              📥 Export Excel
+              📥 Export Selected
             </button>
 
             <button
@@ -2343,6 +1851,292 @@ export default function LocationExpensesPage() {
 
           )}
 
+        {/* SELECTIVE EXPORT PREVIEW MODAL */}
+
+        {showExportModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-6">
+            <div className="flex max-h-[94vh] w-full max-w-7xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-slate-200 bg-[#1F3A5F] px-5 py-4 text-white sm:px-7">
+                <div>
+                  <h2 className="text-xl font-bold sm:text-2xl">Export Expenses</h2>
+                  <p className="mt-1 text-sm text-blue-100">{exportScope === "all" ? "Review all transactions for this location before downloading." : "Select payees and review the report before downloading."}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowExportModal(false)}
+                  className="rounded-lg px-3 py-2 text-xl font-bold text-white hover:bg-white/15"
+                  aria-label="Close export preview"
+                >
+                  ×
+                </button>
+              </div>
+
+              <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 overflow-y-auto p-5 lg:grid-cols-[300px_300px_minmax(0,1fr)] sm:p-7">
+                <section className="rounded-xl border border-slate-200 p-4">
+                  {exportScope === "all" ? (
+                    <div className="rounded-lg bg-blue-50 p-4 text-sm text-blue-900">
+                      <p className="font-bold">Export All Transactions</p>
+                      <p className="mt-2">Includes every loaded transaction for this location, even records without a payee. No selection required.</p>
+                      <p className="mt-2">Both Excel worksheets will be generated.</p>
+                    </div>
+                  ) : <>
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <h3 className="text-base font-bold text-slate-900">1. Select Payees</h3>
+                    <span className="text-xs font-semibold text-slate-500">{selectedExportPayees.length} selected</span>
+                  </div>
+
+                  <div className="mb-3 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedExportPayees([...exportPayeeOptions])}
+                      className="rounded-md border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setSelectedExportPayees([]); setSelectedExportMaterials([]); }}
+                      className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Clear
+                    </button>
+                  </div>
+
+                  <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
+                    {exportPayeeOptions.map((payee) => (
+                      <label key={payee} className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-100 p-3 text-sm text-slate-800 hover:bg-slate-50">
+                        <input
+                          type="checkbox"
+                          className="mt-1 h-4 w-4 accent-blue-700"
+                          checked={selectedExportPayees.includes(payee)}
+                          onChange={(event) => {
+                            const nextPayees = event.target.checked
+                              ? [...selectedExportPayees, payee]
+                              : selectedExportPayees.filter((value) => value !== payee);
+
+                            setSelectedExportPayees(nextPayees);
+
+                            const nextPayeeSet = new Set(nextPayees);
+                            const availableMaterials = new Set(
+                              expenses
+                                .filter((expense) => nextPayeeSet.has(String(expense.payee || "").trim()))
+                                .flatMap((expense) =>
+                                  (expense.expense_items || []).map((item) => String(item.description || "").trim())
+                                )
+                                .filter(Boolean)
+                            );
+
+                            setSelectedExportMaterials((current) =>
+                              current.filter((material) => availableMaterials.has(material))
+                            );
+                          }}
+                        />
+                        <span className="break-words font-medium">{payee}</span>
+                      </label>
+                    ))}
+                    {exportPayeeOptions.length === 0 && (
+                      <p className="py-5 text-center text-sm text-slate-500">No saved payees found.</p>
+                    )}
+                  </div>
+                  </>}
+                </section>
+
+                {exportScope === "selected" && <section className="rounded-xl border border-slate-200 p-4">
+                  <h3 className="mb-3 text-base font-bold text-slate-900">2. Export Type</h3>
+
+                  <div className="space-y-3">
+                    <label className={`block cursor-pointer rounded-xl border p-4 ${exportMode === "whole" ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:bg-slate-50"}`}>
+                      <span className="flex items-start gap-3">
+                        <input
+                          type="radio"
+                          name="location-expense-export-mode"
+                          checked={exportMode === "whole"}
+                          onChange={() => setExportMode("whole")}
+                          className="mt-1 h-4 w-4 accent-blue-700"
+                        />
+                        <span>
+                          <span className="block font-bold text-slate-900">Whole Transactions</span>
+                          <span className="mt-1 block text-sm text-slate-600">Include all materials and the full transaction details for selected payees.</span>
+                        </span>
+                      </span>
+                    </label>
+
+                    <label className={`block cursor-pointer rounded-xl border p-4 ${exportMode === "materials" ? "border-blue-600 bg-blue-50" : "border-slate-200 hover:bg-slate-50"}`}>
+                      <span className="flex items-start gap-3">
+                        <input
+                          type="radio"
+                          name="location-expense-export-mode"
+                          checked={exportMode === "materials"}
+                          onChange={() => setExportMode("materials")}
+                          className="mt-1 h-4 w-4 accent-blue-700"
+                        />
+                        <span>
+                          <span className="block font-bold text-slate-900">Selected Materials Only</span>
+                          <span className="mt-1 block text-sm text-slate-600">Include only the material descriptions you select. Totals will be partial.</span>
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+
+                  {exportMode === "materials" && (
+                    <div className="mt-5 border-t border-slate-200 pt-4">
+                      <div className="mb-3 flex items-center justify-between gap-2">
+                        <h4 className="font-bold text-slate-900">3. Select Materials</h4>
+                        <span className="text-xs font-semibold text-slate-500">{selectedExportMaterials.length} selected</span>
+                      </div>
+
+                      <div className="mb-3 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedExportMaterials([...exportMaterialOptions])}
+                          disabled={selectedExportPayees.length === 0}
+                          className="rounded-md border border-blue-200 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-40"
+                        >
+                          Select All
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedExportMaterials([])}
+                          className="rounded-md border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          Clear
+                        </button>
+                      </div>
+
+                      <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                        {exportMaterialOptions.map((material) => (
+                          <label key={material} className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-100 p-3 text-sm text-slate-800 hover:bg-slate-50">
+                            <input
+                              type="checkbox"
+                              className="mt-1 h-4 w-4 accent-blue-700"
+                              checked={selectedExportMaterials.includes(material)}
+                              onChange={(event) => {
+                                setSelectedExportMaterials((current) =>
+                                  event.target.checked
+                                    ? [...current, material]
+                                    : current.filter((value) => value !== material)
+                                );
+                              }}
+                            />
+                            <span className="break-words">{material}</span>
+                          </label>
+                        ))}
+                        {selectedExportPayees.length === 0 && (
+                          <p className="text-sm text-slate-500">Select at least one payee first.</p>
+                        )}
+                        {selectedExportPayees.length > 0 && exportMaterialOptions.length === 0 && (
+                          <p className="text-sm text-slate-500">No material items found for the selected payees.</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </section>}
+
+                <section className="min-w-0 rounded-xl border border-slate-200 p-4">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="text-base font-bold text-slate-900">Export Preview</h3>
+                      <p className="mt-1 text-sm text-slate-500">{exportPreviewRows.length} row(s) · {locationName}</p>
+                    </div>
+                    <span className={`rounded-full px-3 py-1 text-xs font-bold ${exportMode === "materials" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>
+                      {exportScope === "all" ? "ALL TRANSACTIONS" : exportMode === "materials" ? "PARTIAL MATERIAL REPORT" : "WHOLE TRANSACTIONS"}
+                    </span>
+                  </div>
+
+                  {exportMode === "materials" && (
+                    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                      Partial report only. Reimburse, refund, and full transaction balances are excluded.
+                    </div>
+                  )}
+
+                  <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-xs font-medium text-slate-500">Amount</p>
+                      <p className="mt-1 break-all text-base font-bold text-slate-900">₱{exportPreviewTotals.amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-xs font-medium text-slate-500">Reimburse</p>
+                      <p className="mt-1 break-all text-base font-bold text-slate-900">₱{exportPreviewTotals.reimburse.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-xs font-medium text-slate-500">Refund</p>
+                      <p className="mt-1 break-all text-base font-bold text-slate-900">₱{exportPreviewTotals.refund.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                    <div className="rounded-lg bg-blue-50 p-3">
+                      <p className="text-xs font-medium text-blue-700">Balance / Subtotal</p>
+                      <p className="mt-1 break-all text-base font-bold text-blue-900">₱{exportPreviewTotals.balance.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    </div>
+                  </div>
+
+                  <div className="max-h-[42vh] overflow-auto rounded-lg border border-slate-200">
+                    <table className="min-w-[1400px] w-full border-collapse text-left text-sm">
+                      <thead className="sticky top-0 bg-[#1F3A5F] text-white">
+                        <tr>
+                          {["Date", "Payee", "Address", "Description", "Qty", "Unit", "Price", "Amount", "Reimburse", "Refund", "Balance", "Remarks"].map((heading) => (
+                            <th key={heading} className="whitespace-nowrap px-3 py-3 font-semibold">{heading}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {exportPreviewRows.map((row, index) => (
+                          <tr key={`${row.expenseId}-${index}`} className="border-t border-slate-200 odd:bg-white even:bg-slate-50">
+                            <td className="whitespace-nowrap px-3 py-2">{row.expenseDate}</td>
+                            <td className="px-3 py-2">{row.payee}</td>
+                            <td className="px-3 py-2">{row.address}</td>
+                            <td className="px-3 py-2">{row.description}</td>
+                            <td className="px-3 py-2 text-right">{row.qty || ""}</td>
+                            <td className="px-3 py-2">{row.unit}</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right">{row.price ? `₱${row.price.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : ""}</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right font-semibold">₱{row.amount.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right">₱{row.reimburse.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right">₱{row.refund.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="whitespace-nowrap px-3 py-2 text-right">₱{row.balance.toLocaleString("en-PH", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td className="px-3 py-2">{row.remarks}</td>
+                          </tr>
+                        ))}
+                        {exportPreviewRows.length === 0 && (
+                          <tr>
+                              <td colSpan={12} className="px-4 py-10 text-center text-slate-500">
+                              {exportScope === "all" ? "No transactions found for this location." : <>Select payees{exportMode === "materials" ? " and materials" : ""} to see the export preview.</>}
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-5 py-4 sm:px-7">
+                <p className="text-sm text-slate-600">Review the selected records before downloading.</p>
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowExportModal(false)}
+                    className="rounded-lg border border-slate-300 bg-white px-5 py-3 font-semibold text-slate-700 hover:bg-slate-100"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      (exportScope === "selected" && selectedExportPayees.length === 0) ||
+                      exportPreviewRows.length === 0 ||
+                      (exportMode === "materials" && selectedExportMaterials.length === 0)
+                    }
+                    onClick={async () => {
+                      await exportToExcel();
+                      setShowExportModal(false);
+                    }}
+                    className="rounded-lg bg-green-700 px-5 py-3 font-semibold text-white hover:bg-green-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+                  >
+                    Download Excel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {/* ADD / EDIT FORM */}
 
         {showForm && (
@@ -2741,57 +2535,6 @@ export default function LocationExpensesPage() {
 
                 </div>
 
-                <div>
-
-                  <label className="block text-sm font-medium mb-2">
-                    Status
-                  </label>
-
-                  {isAdmin ? (
-
-                    <select
-                      value={
-                        status
-                      }
-                      onChange={(e) =>
-                        setStatus(
-                          e.target.value
-                        )
-                      }
-                      className="w-full border rounded-lg p-3"
-                    >
-
-                      <option value="Pending">
-                        Pending
-                      </option>
-
-                      <option value="Paid">
-                        Paid
-                      </option>
-
-                      <option value="Reimbursed">
-                        Reimbursed
-                      </option>
-
-                      <option value="Refunded">
-                        Refunded
-                      </option>
-
-                    </select>
-
-                  ) : (
-
-                    <input
-                      type="text"
-                      value="Pending"
-                      readOnly
-                      className="w-full border rounded-lg p-3 bg-gray-100 text-gray-600"
-                    />
-
-                  )}
-
-                </div>
-
               </div>
 
               {/* REMARKS */}
@@ -2977,6 +2720,10 @@ export default function LocationExpensesPage() {
                   <tr>
 
                     <th className="p-4 text-left">
+                      Transaction No.
+                    </th>
+
+                    <th className="p-4 text-left">
                       Date
                     </th>
 
@@ -3020,10 +2767,6 @@ export default function LocationExpensesPage() {
                       Balance
                     </th>
 
-                    <th className="p-4 text-center">
-                      Status
-                    </th>
-
                     <th className="p-4 text-left">
                       Remarks
                     </th>
@@ -3052,6 +2795,12 @@ export default function LocationExpensesPage() {
                           }
                           className="border-t hover:bg-slate-50 align-top"
                         >
+
+                          {/* TRANSACTION NUMBER */}
+
+                          <td className="p-4 font-semibold whitespace-nowrap">
+                            {formatExpenseNumber(expense.id)}
+                          </td>
 
                           {/* DATE */}
 
@@ -3294,34 +3043,6 @@ export default function LocationExpensesPage() {
                                 minimumFractionDigits: 2,
                               }
                             )}
-
-                          </td>
-
-                          {/* STATUS */}
-
-                          <td className="p-4 text-center">
-
-                            <span
-                              className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                                String(
-                                  expense.status
-                                )
-                                  .trim()
-                                  .toLowerCase() ===
-                                "pending"
-                                  ? "bg-yellow-100 text-yellow-700"
-                                  : String(
-                                      expense.status
-                                    )
-                                      .trim()
-                                      .toLowerCase() ===
-                                    "paid"
-                                  ? "bg-green-100 text-green-700"
-                                  : "bg-blue-100 text-blue-700"
-                              }`}
-                            >
-                              {expense.status}
-                            </span>
 
                           </td>
 

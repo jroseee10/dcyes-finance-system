@@ -309,6 +309,62 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ success: false, error: "Invalid request body." }, { status: 400 });
     }
 
+    const action = String(body.action || "").trim();
+
+    if (action === "archive" || action === "restore") {
+      const recordId = Number(body.id);
+
+      if (!Number.isSafeInteger(recordId) || recordId <= 0) {
+        return NextResponse.json(
+          { success: false, error: "Valid Daily Record ID is required." },
+          { status: 400 }
+        );
+      }
+
+      const { data: existingRecord, error: findError } = await supabaseAdmin
+        .from("daily_records")
+        .select("id, is_archived")
+        .eq("id", recordId)
+        .maybeSingle();
+
+      if (findError) {
+        return NextResponse.json(
+          { success: false, error: findError.message },
+          { status: 500 }
+        );
+      }
+
+      if (!existingRecord) {
+        return NextResponse.json(
+          { success: false, error: "Daily Record not found." },
+          { status: 404 }
+        );
+      }
+
+      const shouldArchive = action === "archive";
+
+      const { error: updateError } = await supabaseAdmin
+        .from("daily_records")
+        .update({
+          is_archived: shouldArchive,
+          archived_at: shouldArchive ? new Date().toISOString() : null,
+          archived_by_email: shouldArchive ? adminCheck.email : null,
+        })
+        .eq("id", recordId);
+
+      if (updateError) {
+        return NextResponse.json(
+          { success: false, error: updateError.message },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        success: true,
+        action,
+        id: recordId,
+      });
+    }
     const id = Number(body.id);
     const recordDate = String(body.record_date || "").trim();
     const payee = String(body.payee || "").trim();

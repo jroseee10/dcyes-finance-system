@@ -7,3 +7,5 @@ out/
 *.tsbuildinfo
 .vscode/
 *.zip
+.vercel
+.env*
