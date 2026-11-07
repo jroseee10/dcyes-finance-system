@@ -130,6 +130,9 @@ export default function DailyRecordsPage() {
   const [profile, setProfile] = useState<CurrentProfile | null>(null);
   const [locations, setLocations] = useState<Location[]>([]);
   const [records, setRecords] = useState<DailyRecord[]>([]);
+  const [searchText, setSearchText] = useState("");
+  const [searchDate, setSearchDate] = useState("");
+  const [searchLocation, setSearchLocation] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -176,6 +179,34 @@ export default function DailyRecordsPage() {
       }, 0),
     [items]
   );
+
+  const filteredRecords = useMemo(() => {
+    const query = searchText.trim().toLocaleLowerCase();
+    return records.filter((record) => {
+      if (searchDate && String(record.record_date ?? "").slice(0, 10) !== searchDate) return false;
+      if (searchLocation && String(record.location_id) !== searchLocation) return false;
+      if (!query) return true;
+      const searchable = [
+        record.transaction_no,
+        record.record_date,
+        formatDate(record.record_date),
+        record.payee,
+        record.employee_name,
+        record.receipt_no,
+        record.address,
+        record.remarks,
+        record.locations?.name,
+        destinationLabel(record.destination),
+        String(record.id),
+        String(getRecordTotal(record)),
+        ...((record.daily_record_items || []).flatMap((item) => [
+          item.description,
+          String(item.amount),
+        ])),
+      ].filter(Boolean).join(" ").toLocaleLowerCase();
+      return searchable.includes(query);
+    });
+  }, [records, searchText, searchDate, searchLocation]);
 
   useEffect(() => {
     if (!locationId) {
@@ -807,7 +838,7 @@ export default function DailyRecordsPage() {
         // All-record export uses the dates of the entire database result,
         // not the selected daily, weekly, or monthly reporting period.
         const allDates = sourceRecords
-          .map((record) => normalizeRecordDate(record.record_date))
+          .map((record) => String(record.record_date ?? "").slice(0, 10))
           .filter(Boolean)
           .sort();
 
@@ -846,7 +877,7 @@ export default function DailyRecordsPage() {
           // all records. This includes historical records from every location.
           if (allRecords) return true;
 
-          const normalizedDate = normalizeRecordDate(record.record_date);
+          const normalizedDate = String(record.record_date ?? "").slice(0, 10);
 
           return (
             normalizedDate !== "" &&
@@ -1128,7 +1159,7 @@ export default function DailyRecordsPage() {
               };
 
               if (columnNumber === amountColumn) {
-                cell.numFmt = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
+                cell.numFmt = '"â‚±"#,##0.00;[Red]-"â‚±"#,##0.00';
                 cell.alignment = {
                   vertical: "top",
                   horizontal: "right",
@@ -1165,7 +1196,7 @@ export default function DailyRecordsPage() {
             };
 
             if (columnNumber === amountColumn) {
-              cell.numFmt = '"₱"#,##0.00;[Red]-"₱"#,##0.00';
+              cell.numFmt = '"â‚±"#,##0.00;[Red]-"â‚±"#,##0.00';
               cell.alignment = { horizontal: "right" };
             }
           });
@@ -1915,6 +1946,60 @@ export default function DailyRecordsPage() {
                 </div>
               </div>
 
+              <div className="border-b border-slate-200 bg-slate-50/70 p-4">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_1fr_1fr_auto]">
+                  <label className="block text-sm font-semibold text-slate-700">
+                    Search Daily Records
+                    <input
+                      type="search"
+                      value={searchText}
+                      onChange={(e) => setSearchText(e.target.value)}
+                      placeholder="Transaction no., payee, description, amount, receipt..."
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-normal outline-none focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+                    />
+                  </label>
+                  <label className="block text-sm font-semibold text-slate-700">
+                    Record Date
+                    <input
+                      type="date"
+                      value={searchDate}
+                      onChange={(e) => setSearchDate(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-normal"
+                    />
+                  </label>
+                  <label className="block text-sm font-semibold text-slate-700">
+                    Project Location
+                    <select
+                      value={searchLocation}
+                      onChange={(e) => setSearchLocation(e.target.value)}
+                      className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-normal"
+                    >
+                      <option value="">All Projects</option>
+                      {locations.map((location) => (
+                        <option key={location.id} value={String(location.id)}>
+                          {location.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchText("");
+                      setSearchDate("");
+                      setSearchLocation("");
+                    }}
+                    className="self-end rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold hover:bg-slate-100"
+                  >
+                    Clear Search
+                  </button>
+                </div>
+                <p className="mt-3 text-xs text-slate-600" aria-live="polite">
+                  Showing {filteredRecords.length} of {records.length} loaded records
+                  {(searchText || searchDate || searchLocation) ? " (filtered)" : ""}
+                </p>
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[1450px] text-sm">
                   <thead className="bg-slate-100 text-slate-700">
@@ -1942,14 +2027,16 @@ export default function DailyRecordsPage() {
                           Loading Daily Records...
                         </td>
                       </tr>
-                    ) : records.length === 0 ? (
+                    ) : filteredRecords.length === 0 ? (
                       <tr>
                         <td colSpan={13} className="p-10 text-center text-slate-500">
-                          No Daily Records yet.
+                          {records.length === 0
+                            ? "No Daily Records yet."
+                            : "No matching records. Try a different search or clear the filters."}
                         </td>
                       </tr>
                     ) : (
-                      records.map((record) => {
+                      filteredRecords.map((record) => {
                         const recordItems = [
                           ...(record.daily_record_items || []),
                         ].sort(
